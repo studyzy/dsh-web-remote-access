@@ -30,10 +30,10 @@
 
 - insert:
     - id: web-token-startup
-      name: 'dsh-web-remote-access/startup'
+      name: '@studyzy/dsh-web-remote-access/startup'
 
     - id: webserver-gated
-      name: 'dsh-web-remote-access/webserver'
+      name: '@studyzy/dsh-web-remote-access/webserver'
       inject: [webStartup]
       config:
         host: !!js ctx.webStartup.host ?? '127.0.0.1'
@@ -41,7 +41,7 @@
         webToken: !!js ctx.webStartup.webToken ?? ''
 
     - id: web-token-url
-      name: 'dsh-web-remote-access/url'
+      name: '@studyzy/dsh-web-remote-access/url'
       inject: [webStartup, webServer]
       config:
         printUrl: true
@@ -52,7 +52,7 @@
     # fallback into the served index so client bundles (RPC ids, attachments)
     # do not throw — which also keeps the WebSocket readiness handshake alive.
     - id: web-token-polyfill
-      name: 'dsh-web-remote-access/polyfill'
+      name: '@studyzy/dsh-web-remote-access/polyfill'
       inject: [webStartup, webServer]
       config:
         webToken: !!js ctx.webStartup.webToken ?? ''

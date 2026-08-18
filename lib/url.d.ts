@@ -1,5 +1,5 @@
 /**
- * dsh-web-remote-access/url — the web URL line printer. Replaces the stock web-app
+ * @studyzy/dsh-web-remote-access/url — the web URL line printer. Replaces the stock web-app
  * URL print (which the bundle patch disables) so a configured `--web_token`
  * shows up in the printed URL: opening the printed line is exactly the
  * `?web_token=` grant flow, and the LAN variant mirrors the /api trust

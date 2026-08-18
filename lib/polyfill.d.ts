@@ -1,5 +1,5 @@
 /**
- * dsh-web-remote-access/polyfill — index-tap injection of a `crypto.randomUUID`
+ * @studyzy/dsh-web-remote-access/polyfill — index-tap injection of a `crypto.randomUUID`
  * polyfill. `crypto.randomUUID` is a secure-context-only Web API: over plain
  * HTTP on a non-loopback address — exactly the remote access this bundle
  * enables — it is `undefined`, while `crypto.getRandomValues` (which insecure

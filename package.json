@@ -1,8 +1,37 @@
 {
-  "name": "dsh-web-remote-access",
+  "name": "@studyzy/dsh-web-remote-access",
   "description": "Out-of-tree dsh web-profile bundle: enables --host 0.0.0.0 and gates the Web UI behind a --web_token access token (cookie after first ?web_token= open). Forks @deepseek-ai/dsh-host-webserver and @deepseek-ai/dsh-web-app/startup.",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "deepseek",
+    "harness",
+    "plugin",
+    "bundle",
+    "web",
+    "remote-access",
+    "web-token",
+    "authentication"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "studyzy",
+    "email": "studyzy@163.com",
+    "url": "https://github.com/studyzy"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/studyzy/dsh-web-remote-access.git"
+  },
+  "homepage": "https://github.com/studyzy/dsh-web-remote-access#readme",
+  "bugs": {
+    "url": "https://github.com/studyzy/dsh-web-remote-access/issues"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
@@ -33,7 +62,6 @@
     "lib",
     "cordis.patch.yml"
   ],
-  "license": "MIT",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
