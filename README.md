@@ -2,6 +2,8 @@
 
 让 [dsh](https://github.com/deepseek-ai/deepseek-harness) Web UI 支持远程访问,并用访问令牌(web token)做访问控制——**不改动 harness 源码**,全部通过 bundle 插件实现。
 
+开源项目:[github.com/studyzy/dsh-web-remote-access](https://github.com/studyzy/dsh-web-remote-access) · MIT 协议
+
 ## 功能
 
 - `--host 0.0.0.0` 可用,且**始终有令牌保护**:对外暴露的服务绝不会无认证运行。
@@ -12,6 +14,18 @@
 - 启动时打印可直接打开的 URL(含 `?web_token=`),绑定所有网卡时还会打印 LAN 地址。
 
 ## 安装
+
+从 GitHub 安装(推荐,免构建):
+
+```sh
+# SSH
+dsh plugin --profile web add git@github.com:studyzy/dsh-web-remote-access.git
+
+# 或 HTTPS
+dsh plugin --profile web add https://github.com/studyzy/dsh-web-remote-access.git
+```
+
+本地源码安装(开发用):
 
 ```sh
 dsh plugin --profile web add /path/to/dsh-web-remote-access
