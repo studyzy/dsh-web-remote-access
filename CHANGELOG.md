@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-08-19
+
+### Fixed
+
+- 远程访问下 WebSocket 下行(`/api/events.host`、`/api/events.mux`)握手失败:升级路径与 HTTP 路径不一致,未将凭 Cookie 认证的 `/api` 请求的 Host 改写为回环权威,被 harness 的浏览器信任围栏(DNS rebinding 防护)以 403 拒绝。现在升级路径与 HTTP 路径同样调用 `authorizeApiAsLoopback`,WebSocket 握手凭 Cookie 即可通过围栏。
+
 ## [1.0.0] - 2026-08-18
 
 ### Added
@@ -24,4 +30,5 @@
 
 - 对外暴露的服务始终有令牌保护:绑定 `0.0.0.0` 时若未显式提供令牌,也会生成随机令牌,绝不无认证运行。
 
+[1.0.1]: https://github.com/studyzy/dsh-web-remote-access/releases/tag/v1.0.1
 [1.0.0]: https://github.com/studyzy/dsh-web-remote-access/releases/tag/v1.0.0
