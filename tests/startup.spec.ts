@@ -11,7 +11,6 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import { internals, provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, internals as startupInternals, WEB_STARTUP_SERVICE, type WebStartupValues } from '../src/startup.ts'
 
@@ -22,12 +21,23 @@ interface Observed {
   readerConfig?: unknown
 }
 
+/**
+ * Provide the launcher services the startup plugin reads (`cmdlineArgs` and
+ * `appExit`), mirroring the harness's own provideCmdline contract.
+ * @param ctx - the booted context.
+ * @param host - the invocation's arguments and its exit request.
+ */
+function provideCmdline(ctx: Context, host: { args: readonly string[]; exit: (code: number) => void }): void {
+  ctx.provide('cmdlineArgs', { get: () => Object.freeze([...host.args]) })
+  ctx.provide('appExit', host.exit)
+}
+
 const disposers: (() => Promise<void>)[] = []
 
 afterEach(async () => {
   for (const dispose of disposers.splice(0)) await dispose()
-  internals.stdout = process.stdout
-  internals.stderr = process.stderr
+  startupInternals.stdout = process.stdout
+  startupInternals.stderr = process.stderr
   startupInternals.mintRandomToken = () => randomBytes(32).toString('base64url')
   startupInternals.envWebToken = () => process.env.DSH_WEB_TOKEN
 })
@@ -67,8 +77,8 @@ export const apply = ctx => globalThis.__webStartupApply(ctx)
     '',
   ].join('\n'))
   const observing = { write: (chunk: string) => { observed.out += chunk; return true } }
-  internals.stdout = observing
-  internals.stderr = observing
+  startupInternals.stdout = observing
+  startupInternals.stderr = observing
   const globals = globalThis as unknown as {
     __webStartupApply: typeof apply
     __webStartupObserved: Observed

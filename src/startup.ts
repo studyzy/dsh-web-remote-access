@@ -7,12 +7,18 @@
  * the explicit `--web_token` wins, then `$DSH_WEB_TOKEN`, then a fresh random
  * token minted at startup — so an all-interfaces bind always runs behind the
  * gate and the printed URL always opens directly.
+ *
+ * The flag parse and bounded-exit wiring is a vendored port of
+ * `@deepseek-ai/dsh-cmdline`'s `parseCmdline` (MIT). This bundle forks the
+ * official startup, and depending on that rc package pulled an unsatisfied
+ * `dsh-invariants` peer into every profile install (the harness resolves
+ * out-of-tree peers at runtime, but pnpm still warns). Inlining the ~40 lines
+ * keeps consumers install-clean and independent of rc churn.
  */
 
 import { randomBytes } from 'node:crypto'
 import { Command } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
-import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-startup'
@@ -46,15 +52,20 @@ interface WebOptions {
   web_token?: string
 }
 
-/** Test hooks: randomness and the environment seam. */
+/** Test hooks: randomness, the environment seam, and the output streams. */
 export const internals: {
   /** Mint the random fallback token; randomBytes(32) → base64url by default. */
   mintRandomToken: () => string
   /** Read the `DSH_WEB_TOKEN` environment variable. */
   envWebToken: () => string | undefined
+  /** Process stream commander output is written to; tests replace these to capture text. */
+  stdout: { write(chunk: string): unknown }
+  stderr: { write(chunk: string): unknown }
 } = {
   mintRandomToken: () => randomBytes(32).toString('base64url'),
   envWebToken: () => process.env[WEB_TOKEN_ENV],
+  stdout: process.stdout,
+  stderr: process.stderr,
 }
 
 /**
@@ -77,6 +88,99 @@ Examples:
   dsh --profile web --host 0.0.0.0           serve on all interfaces behind a random token (or $DSH_WEB_TOKEN)
   dsh --profile web --host 0.0.0.0 --web_token <token>   serve on all interfaces behind a fixed token
 `)
+}
+
+/**
+ * Whether any command in the tree declares an action handler.
+ *
+ * The `Command` type cannot express the action precondition, so the handler is
+ * read structurally (as {@link isCommanderError} reads commander's control-flow
+ * errors): without this guard, a program that forgot its action would parse
+ * successfully, publish nothing, and surface only as dependent rows pending on
+ * the absent service.
+ * @param command - the command whose tree is inspected.
+ * @returns true when the command or any registered subcommand has an action.
+ */
+function hasAction(command: Command): boolean {
+  if (typeof (command as unknown as { _actionHandler?: unknown })._actionHandler === 'function') return true
+  return command.commands.some(hasAction)
+}
+
+/**
+ * Route every command's exit and output through the launcher adapter.
+ *
+ * Commander copies `exitOverride` and output configuration into a subcommand
+ * only at registration, so a root-only override would let an
+ * already-registered subcommand's rejection write to the process streams and
+ * call `process.exit` directly, bypassing the launcher's bounded exit.
+ * @param command - the root of the command tree to configure.
+ */
+function configureExitAndOutput(command: Command): void {
+  command
+    .exitOverride()
+    .configureOutput({
+      writeOut: text => void internals.stdout.write(text),
+      writeErr: text => void internals.stderr.write(text),
+    })
+  for (const child of command.commands) configureExitAndOutput(child)
+}
+
+/**
+ * Whether a thrown value is commander's own control-flow error (help, version,
+ * a parse error, or `program.error`).
+ *
+ * Detected structurally, not with `instanceof`: an out-of-tree plugin brings
+ * its own commander copy, whose `CommanderError` class is a different identity
+ * from any commander the harness imported, and an identity check there would
+ * rethrow a printed help as a fatal load failure.
+ * @param error - the thrown value.
+ * @returns true when the value carries commander's error code and exit code.
+ */
+function isCommanderError(error: unknown): error is { code: string; exitCode: number } {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { code?: unknown; exitCode?: unknown }
+  return typeof candidate.code === 'string' && candidate.code.startsWith('commander.')
+    && typeof candidate.exitCode === 'number'
+}
+
+/**
+ * Parse the launcher's immutable argument snapshot with this app's commander
+ * program. Commander runs the program's own synchronous action handler on a
+ * successful parse; app code there publishes its service and rejects an
+ * invalid invocation with `program.error(...)`.
+ *
+ * Help, version, and rejected arguments — from the grammar or from an action
+ * — are terminal for the process: commander writes the text and the helper
+ * requests `ctx.appExit`. The action never runs on help, version, or a
+ * grammar rejection; an action must reject before it publishes, because
+ * statements before its `program.error(...)` have already run.
+ * @param ctx - plugin context carrying `cmdlineArgs` and `appExit`.
+ * @param program - the app's commander program, with its flags, description,
+ * actions, and any subcommands already declared.
+ * @throws when the launcher did not provide the command line and exit request,
+ * or when no command in the program declares an action.
+ */
+function parseCmdline(ctx: Context, program: Command): void {
+  // Read through the global service store, not the property proxy: appExit is
+  // an optional host value and the plugin only needs to inject cmdlineArgs.
+  const args = ctx.get('cmdlineArgs')
+  const exit = ctx.get('appExit')
+  if (args === undefined || exit === undefined) {
+    throw new Error(`${program.name()}: the launcher must provide ctx.cmdlineArgs and ctx.appExit before the tree mounts`)
+  }
+  if (!hasAction(program)) {
+    throw new Error(`${program.name()}: no command in the program declares an action; parseCmdline runs the invoked command's action on a successful parse, and app code there publishes its service`)
+  }
+  configureExitAndOutput(program)
+  try {
+    program.parse(args.get(), { from: 'user' })
+  } catch (error) {
+    // exitOverride turns help, version, a parse error, and the action's own
+    // program.error() into a CommanderError; commander has already written the
+    // text through the output configured above.
+    if (!isCommanderError(error)) throw error
+    exit(error.exitCode)
+  }
 }
 
 /**

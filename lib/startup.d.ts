@@ -7,6 +7,13 @@
  * the explicit `--web_token` wins, then `$DSH_WEB_TOKEN`, then a fresh random
  * token minted at startup — so an all-interfaces bind always runs behind the
  * gate and the printed URL always opens directly.
+ *
+ * The flag parse and bounded-exit wiring is a vendored port of
+ * `@deepseek-ai/dsh-cmdline`'s `parseCmdline` (MIT). This bundle forks the
+ * official startup, and depending on that rc package pulled an unsatisfied
+ * `dsh-invariants` peer into every profile install (the harness resolves
+ * out-of-tree peers at runtime, but pnpm still warns). Inlining the ~40 lines
+ * keeps consumers install-clean and independent of rc churn.
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Stable Cordis plugin name. */
@@ -28,12 +35,19 @@ export interface WebStartupValues {
     /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one. */
     webToken: string;
 }
-/** Test hooks: randomness and the environment seam. */
+/** Test hooks: randomness, the environment seam, and the output streams. */
 export declare const internals: {
     /** Mint the random fallback token; randomBytes(32) → base64url by default. */
     mintRandomToken: () => string;
     /** Read the `DSH_WEB_TOKEN` environment variable. */
     envWebToken: () => string | undefined;
+    /** Process stream commander output is written to; tests replace these to capture text. */
+    stdout: {
+        write(chunk: string): unknown;
+    };
+    stderr: {
+        write(chunk: string): unknown;
+    };
 };
 /**
  * Parse and provide the Web invocation as an ordinary Cordis service. The
