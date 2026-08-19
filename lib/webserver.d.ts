@@ -103,6 +103,22 @@ export declare class WebServer extends Service {
     tapIndex(transform: (html: string) => string): () => void;
     /** Listen; resolves once the socket is bound (rejection = FAILED fiber). */
     [Service.init](): Promise<void>;
+    /**
+     * Present a token-authenticated `/api` request to the downstream trust fence
+     * as a loopback authority instead of the LAN address it arrived on. The
+     * harness pins the configuration plane (settings/credentials/agentPreset,
+     * host.* , llm.discoverModels) to loopback "until a real authentication layer
+     * exists" (client-connection PRIVILEGED_METHODS). The token gate IS that
+     * layer: every `/api` request here passed cookie authentication, so the
+     * fence may see a loopback authority. The cross-site defenses
+     * (Origin/Sec-Fetch-Site) still run — the gate has already admitted only
+     * cookie-bearing same-site clients. Both the HTTP and the upgrade path
+     * apply it: the browser WebSocket handshake sends the same cookie and names
+     * the same LAN authority in its Host header.
+     * @param req - the authenticated request.
+     * @param pathname - the request pathname, already parsed.
+     */
+    private authorizeApiAsLoopback;
     /** Longest-prefix-wins over the prefix table after an exact-table miss. */
     private match;
     /**

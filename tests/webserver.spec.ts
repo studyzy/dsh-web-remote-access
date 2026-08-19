@@ -415,4 +415,67 @@ describe('webToken gate', () => {
     admitted.destroy()
     await loaded.fiber.dispose()
   })
+
+  it('presents token-authenticated /api upgrades to downstream handlers as loopback', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition(0, TOKEN)
+    const port = loaded.webServer.port
+    const seen: { host?: string; origin?: string } = {}
+    loaded.webServer.registerUpgrade({
+      path: '/api/events.mux',
+      handler: (req, socket) => {
+        seen.host = req.headers.host
+        seen.origin = req.headers.origin
+        socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: dsh-test\r\n\r\n')
+      },
+    })
+    loaded.webServer.registerUpgrade({
+      path: '/other',
+      handler: (req, socket) => {
+        seen.host = req.headers.host
+        socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: dsh-test\r\n\r\n')
+      },
+    })
+    const first = await rawRequest(port, `/?web_token=${TOKEN}`)
+    const cookie = first.headers['set-cookie'].split(';')[0] as string
+    // A LAN Host arriving with the cookie is shown to the upgrade handler as
+    // loopback — the same rewrite the HTTP /api path applies — so the
+    // harness's browser-trust fence admits the WebSocket downlink.
+    const admitted = connect(port, '127.0.0.1')
+    await once(admitted, 'connect')
+    const response = once(admitted, 'data')
+    admitted.write([
+      'GET /api/events.mux HTTP/1.1',
+      `Host: 9.134.212.96:${String(port)}`,
+      'Connection: Upgrade',
+      'Upgrade: dsh-test',
+      `Origin: http://9.134.212.96:${String(port)}`,
+      `Cookie: ${cookie}`,
+      '',
+      '',
+    ].join('\r\n'))
+    const [data] = await response as [Buffer]
+    expect(String(data)).toContain('101 Switching Protocols')
+    expect(seen.host).toBe(`127.0.0.1:${String(port)}`)
+    expect(seen.origin).toBe(`http://127.0.0.1:${String(port)}`)
+    // Non-/api upgrade paths are not rewritten.
+    seen.host = undefined
+    const plain = connect(port, '127.0.0.1')
+    await once(plain, 'connect')
+    const plainResponse = once(plain, 'data')
+    plain.write([
+      'GET /other HTTP/1.1',
+      `Host: 9.134.212.96:${String(port)}`,
+      'Connection: Upgrade',
+      'Upgrade: dsh-test',
+      `Cookie: ${cookie}`,
+      '',
+      '',
+    ].join('\r\n'))
+    const [plainData] = await plainResponse as [Buffer]
+    expect(String(plainData)).toContain('101 Switching Protocols')
+    expect(seen.host).toBe(`9.134.212.96:${String(port)}`)
+    admitted.destroy()
+    plain.destroy()
+    await loaded.fiber.dispose()
+  })
 })
