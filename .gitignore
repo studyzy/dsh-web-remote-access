@@ -2,3 +2,4 @@ node_modules/
 lib/types/
 *.tsbuildinfo
 .playwright-cli/
+.artifacts/

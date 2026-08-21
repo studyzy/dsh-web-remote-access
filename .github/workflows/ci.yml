@@ -33,3 +33,68 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # Browser e2e against a REAL `dsh web` (isolated $DSH_HOME): installs the
+  # bundle via `dsh plugin --profile web add`, boots the forked webserver with
+  # `--host 0.0.0.0 --web_token`, then asserts the token gate over HTTP and
+  # drives the WebUI with Playwright (see tests/e2e/remote-access.e2e.ts).
+  # Needs no secrets — the gate and the SPA boot don't require a model key.
+  e2e:
+    name: E2E against latest dsh
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The bundle's `main` points at lib/index.js; dsh links this repo into
+      # the profile as-is, so lib/ must exist before the e2e installs it.
+      - name: Build the plugin
+        run: pnpm build
+
+      # dsh manages a profile's plugins with `pnpm` from PATH, and pnpm 9
+      # rejects `pnpm add` to a workspace root — so expose pnpm ≥10 for the
+      # spawned `dsh web` install step (the test's resolvePnpmBinDir detects it
+      # on PATH and skips its corepack fallback).
+      #
+      # Use corepack (ships with Node) to activate pnpm@10 as the `pnpm` on
+      # PATH. `npm install -g pnpm@10` alone is unreliable here: setup-node
+      # prepends PNPM_HOME (setup-pnpm's pnpm@9 bin) and can shadow npm's
+      # global bin.
+      - name: Upgrade pnpm for dsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+          pnpm --version
+
+      # The latest dsh (next tag) ships the web app dist and manages profile
+      # plugins with its own pnpm.
+      - name: Install latest dsh
+        run: npm i -g @deepseek-ai/dsh@next
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser e2e
+        run: pnpm test:e2e
+
+      # Upload failure evidence (screenshot + page-state JSON from saveFailureShot)
+      # so a boot/gate failure can be diagnosed from the DOM, not guessed at.
+      - name: Upload e2e failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: .artifacts/**
+          if-no-files-found: ignore

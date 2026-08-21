@@ -73,7 +73,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "vitest run -c vitest.e2e.config.ts tests/e2e/remote-access.e2e.ts",
+    "test:e2e:local": "vitest run -c vitest.e2e.config.ts tests/e2e/remote-access-local.e2e.ts"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -84,6 +86,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis-plugin-include": "^1.0.6",
     "@types/node": "^22.0.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

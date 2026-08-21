@@ -164,6 +164,8 @@ cordis.patch.yml  # dsh bundle patch 层
 ```sh
 pnpm install
 pnpm test       # vitest:fork 契约 + 门卫行为
+pnpm test:e2e   # 浏览器 e2e:在真实 dsh CLI(隔离 $DSH_HOME)上验证令牌门卫与 WebUI 启动;经由局域网 IP 访问以覆盖 polyfill(需全局 dsh;CI 每天对最新 dsh 跑)
+pnpm test:e2e:local   # 浏览器 e2e:复用本地 ~/.dsh 的 web profile,把当前源码链接进去,同样经由局域网 IP 验证(仅本机,不入 CI)
 pnpm build      # tsc -> lib/(ESM)
 ```
 

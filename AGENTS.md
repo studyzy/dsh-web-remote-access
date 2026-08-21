@@ -14,11 +14,13 @@ Requires Node ≥ 18 and [pnpm](https://pnpm.io/).
 pnpm install                        # install dependencies
 pnpm build                          # tsc -p tsconfig.json → lib/ (ESM output, from src/)
 pnpm test                           # vitest run (all tests)
+pnpm test:e2e                       # browser e2e against a REAL dsh CLI (needs global dsh + Playwright chromium)
+pnpm test:e2e:local                 # browser e2e against the developer's real ~/.dsh web profile
 pnpm vitest run tests/webserver.spec.ts    # single test file
 pnpm vitest run tests/webserver.spec.ts -t "401"   # single test by name filter
 ```
 
-CI (`.github/workflows/ci.yml`) runs `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm test` on Node 18/20/22.
+CI (`.github/workflows/ci.yml`) runs `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm test` on Node 18/20/22, plus an `e2e` job that installs the latest `@deepseek-ai/dsh@next` and runs `pnpm test:e2e` (see `tests/e2e/remote-access.e2e.ts`).
 
 To test the package inside a real dsh harness, install it into the `web` profile: `dsh plugin --profile web add <path-or-npm-spec>` (see README).
 
