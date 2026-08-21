@@ -97,6 +97,7 @@ dsh web: http://127.0.0.1:3080/?web_token=<token> (LAN: http://192.168.1.5:3080/
 |---|---|
 | `--host <host>` | 绑定地址。`0.0.0.0` 表示所有网卡;默认 `127.0.0.1` |
 | `--port <port>` | 监听端口;传 `0` 由操作系统分配空闲端口。默认 `3080` |
+| `--no-open` | 启动后不在默认浏览器中打开 Web UI(无头服务器常用) |
 | `--trusted-host <authority...>` | 额外信任的权威(host 或 host:port,可重复),用于 `/api` 浏览器信任围栏 |
 | `--web_token <token>` | 访问令牌;缺省时回退到 `$DSH_WEB_TOKEN`,再回退到启动时随机生成的令牌 |
 
@@ -116,6 +117,7 @@ dsh web: http://127.0.0.1:3080/?web_token=<token> (LAN: http://192.168.1.5:3080/
 | `webserver` | `@studyzy/dsh-web-remote-access/webserver` | fork `@deepseek-ai/dsh-host-webserver`,保持 `ctx.webServer` 契约不变,增加:路由匹配前的令牌门卫(含升级路径)、manifest 豁免、对已认证 `/api` 请求的回环呈现 |
 | `web-runtime` 打印 | `@studyzy/dsh-web-remote-access/url` | 打印带 `?web_token=` 的 URL 行 |
 | —(新增行) | `@studyzy/dsh-web-remote-access/polyfill` | 向 index.html 注入 `crypto.randomUUID` polyfill(非安全上下文支持) |
+| —(新增行) | `@studyzy/dsh-web-remote-access/loopback` | 向 index.html 注入脚本,让已认证的远程浏览器以回环视图呈现(见下方"安全说明") |
 
 令牌解析为 `--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成,因此门卫始终开启,打印的 URL 始终能直接打开。绑定所有网卡时,`/api` 信任围栏推导出的 LAN IP 字面量也就是打印的 LAN URL 所用的地址。
 
@@ -140,6 +142,7 @@ dsh web: http://127.0.0.1:3080/?web_token=<token> (LAN: http://192.168.1.5:3080/
 - `/manifest.webmanifest`(仅 GET/HEAD)不要求令牌:浏览器抓取 PWA manifest 时不带会话 Cookie,而该文件是随 dist 发布的公开静态元数据,拦住它只会 401 安装检测,没有任何安全收益。其余(应用、`/api`、升级路径)全部保持门卫。
 - 页面会注入基于 `crypto.getRandomValues` 的 `crypto.randomUUID` polyfill:`crypto.randomUUID` 仅在安全上下文可用,在 LAN IP 上的纯 HTTP 里是 `undefined`,会导致客户端 RPC 发号崩溃、WebSocket 就绪握手失败("WebSocket is closed before the connection is established")。polyfill 在回环/HTTPS 下自动空操作。
 - 通过令牌认证的 `/api` 请求会以回环权威(Host/Origin 在 Cookie 校验通过后改写)呈现给下游信任围栏。harness 把特权方法(`settings.*`、`credentials.*`、`agentPreset.*`、`host.*`、`llm.discoverModels`)钉在回环上"直到出现真正的认证层"——令牌门卫就是那层认证,因此配置平面可远程访问。门卫仍只放行带 Cookie 的同源客户端,非 `/api` 路径不受影响。
+- 客户端侧的对应面:harness 的 `connection.isLoopback` 完全由页面 `location.hostname` 决定,LAN IP 下为 `false`,设置界面因此落入进程内 "memory" 作用域,模型/插件页报 "settings are unavailable in this browser"。本包在令牌门禁启用时向 index.html 注入脚本,在 `@deepseek-ai/dsh-client-connection` 提供 `connection` 服务时将其 `isLoopback` 置为 `true`,让已认证的远程浏览器呈现与回环访问一致的设置体验(模型页、插件页、设置文档编辑、交付物"打开文件"等)。这不会扩大信任面:页面只会在令牌门卫放行后才被渲染,且服务端 `/api` 信任围栏仍独立生效。
 - 已知限制:`DSH_WEB_URL` 与 web-surface 模型提示仍是无令牌的回环 URL;本 bundle 不提供带令牌的模型侧 URL。
 
 ## 项目结构
@@ -151,6 +154,7 @@ src/
   webserver.ts    # fork @deepseek-ai/dsh-host-webserver:令牌门卫 + /api 回环呈现
   url.ts          # 打印带 ?web_token= 的 URL 行(本地 + LAN)
   polyfill.ts     # 向 index.html 注入 crypto.randomUUID polyfill
+  loopback.ts     # 向 index.html 注入脚本,远程浏览器呈现回环视图(isLoopback)
 tests/            # vitest:fork 契约 + 门卫行为
 cordis.patch.yml  # dsh bundle patch 层
 ```

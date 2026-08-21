@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import HttpServer from '../src/webserver.ts'
+import HttpServer, { type IndexInjection } from '../src/webserver.ts'
 
 let root: string | undefined
 let context: Context | undefined
@@ -226,6 +226,29 @@ describe('real Loader composition', () => {
     expect(upgradedServerClosed).toBe(true)
     upgraded.destroy()
     await expect(request(port, '/probe')).rejects.toThrow()
+  })
+
+  it('renders the structured index-inject table before raw taps (upstream 0.1.1 renderIndex contract)', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition()
+    const server = loaded.webServer
+    const rows: IndexInjection[] = []
+    // A subscriber mirrors the harness's client-modules/ui-theme rows: it
+    // pushes fresh rows at each emit, exactly as renderIndex's
+    // collectIndexInjections() expects.
+    loaded.on('webserver/index-inject', (table) => { table.push(...rows) })
+    rows.push({ kind: 'global', name: '__P__', value: 'light' })
+    const untap = server.tapIndex(html => html.replace('<head>', '<head><script>window.__T__=1</script>'))
+    const html = server.renderIndex('<head></head><body>shell</body>')
+    expect(html).toContain('globalThis["__P__"] = "light"')
+    expect(html).toContain('__T__')
+    // Raw taps run over the already-rendered rows, so the tap's script lands
+    // right after <head>, ahead of the structured row it injected after it.
+    expect(html.indexOf('__T__')).toBeLessThan(html.indexOf('__P__'))
+    // A late row is read fresh at emit time, not captured at subscription.
+    rows.push({ kind: 'global', name: '__Q__', value: 2 })
+    expect(server.renderIndex('<head></head><body></body>')).toContain('globalThis["__Q__"] = 2')
+    untap()
+    await loaded.fiber.dispose()
   })
 
   it('fails the fiber when the port is already taken (fail-loud at activation)', { timeout: 60_000 }, async () => {

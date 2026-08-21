@@ -26,6 +26,8 @@ export declare const WEB_STARTUP_SERVICE = "webStartup";
 export declare const WEB_TOKEN_ENV = "DSH_WEB_TOKEN";
 /** What the web rows read from {@link WEB_STARTUP_SERVICE}. */
 export interface WebStartupValues {
+    /** Whether this invocation opens the default browser after startup. */
+    openBrowser: boolean;
     /** `--host`, absent when the invocation did not name one. */
     host?: string;
     /** `--port`, absent when the invocation did not name one. */

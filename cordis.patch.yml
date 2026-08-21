@@ -24,6 +24,7 @@
 # variable) stays mounted.
 - id: web-runtime
   config:
+    openBrowser: !!js ctx.webStartup.openBrowser
     printUrl: false
     surfaceContext: true
     trustedHosts: !!js ctx.webStartup.trustedHosts
@@ -53,6 +54,18 @@
     # do not throw — which also keeps the WebSocket readiness handshake alive.
     - id: web-token-polyfill
       name: '@studyzy/dsh-web-remote-access/polyfill'
+      inject: [webStartup, webServer]
+      config:
+        webToken: !!js ctx.webStartup.webToken ?? ''
+
+    # Remote-browser loopback view: the client derives connection.isLoopback
+    # from location.hostname, so a LAN browser falls into the settings "memory"
+    # scope and the Models/Plugins pages report "settings are unavailable".
+    # The tap injects a script that flips isLoopback on the provided connection
+    # handle (the token gate already authenticated the client, and the gated
+    # webserver rewrites /api authority to loopback so the RPCs would succeed).
+    - id: web-token-loopback
+      name: '@studyzy/dsh-web-remote-access/loopback'
       inject: [webStartup, webServer]
       config:
         webToken: !!js ctx.webStartup.webToken ?? ''

@@ -1,7 +1,7 @@
 {
   "name": "@studyzy/dsh-web-remote-access",
   "description": "Out-of-tree dsh web-profile bundle: enables --host 0.0.0.0 and gates the Web UI behind a --web_token access token (cookie after first ?web_token= open). Forks @deepseek-ai/dsh-host-webserver and @deepseek-ai/dsh-web-app/startup.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -54,6 +54,10 @@
     "./polyfill": {
       "types": "./lib/polyfill.d.ts",
       "default": "./lib/polyfill.js"
+    },
+    "./loopback": {
+      "types": "./lib/loopback.d.ts",
+      "default": "./lib/loopback.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"

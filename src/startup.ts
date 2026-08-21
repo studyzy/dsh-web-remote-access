@@ -34,6 +34,8 @@ export const WEB_TOKEN_ENV = 'DSH_WEB_TOKEN'
 
 /** What the web rows read from {@link WEB_STARTUP_SERVICE}. */
 export interface WebStartupValues {
+  /** Whether this invocation opens the default browser after startup. */
+  openBrowser: boolean
   /** `--host`, absent when the invocation did not name one. */
   host?: string
   /** `--port`, absent when the invocation did not name one. */
@@ -47,6 +49,7 @@ export interface WebStartupValues {
 /** The web flag family, as commander parsed it. */
 interface WebOptions {
   host?: string
+  open: boolean
   port?: string
   trustedHost?: string[]
   web_token?: string
@@ -78,6 +81,7 @@ function webCommand(): Command {
     .description('Serve the DeepSeek Harness browser UI.')
     .helpOption('-h, --help', 'show this help')
     .option('--host <host>', 'bind host')
+    .option('--no-open', 'do not open the Web UI in the default browser')
     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
     .option('--web_token <token>', 'require this token to open the Web UI (first visit via ?web_token= grants a session cookie); defaults to $DSH_WEB_TOKEN, or a fresh random token')
@@ -203,6 +207,7 @@ export function apply(ctx: Context): void {
     const env = internals.envWebToken()
     const webToken = explicit ?? (env !== undefined && env !== '' ? env : internals.mintRandomToken())
     ctx.provide(WEB_STARTUP_SERVICE, {
+      openBrowser: options.open,
       ...options.host !== undefined && { host: options.host },
       ...options.port !== undefined && { port: Number(options.port) },
       trustedHosts: options.trustedHost ?? [],

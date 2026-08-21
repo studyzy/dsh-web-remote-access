@@ -1,8 +1,9 @@
 /**
  * @studyzy/dsh-web-remote-access/webserver — a fork of `@deepseek-ai/dsh-host-webserver` that
  * adds an optional `webToken` access gate. Everything else (HTTP and upgrade
- * route registries, index transform taps, the single fallback seat) keeps the
- * upstream contract so the composition resolves `ctx.webServer` unchanged.
+ * route registries, structured index injections plus raw transform taps, the
+ * single fallback seat) keeps the upstream contract so the composition
+ * resolves `ctx.webServer` unchanged.
  * The gate is transport-level only: when `webToken` is set, every request must
  * present it as the `dsh_web_token` cookie; the `?web_token=` query parameter
  * grants a session cookie once (302 to the clean pathname). Upgrades (the
@@ -13,9 +14,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type IndexInjection } from './injections.js';
+export { renderIndexInjections } from './injections.js';
+export type { IndexInjection, IndexInjectionPlacement } from './injections.js';
 declare module '@deepseek-ai/cordis' {
     interface Context {
         webServer: WebServer;
+    }
+    interface Events {
+        /**
+         * Collect the structured index injection table. Emitted on every index
+         * render; listeners push their current rows, so a row's data is read fresh
+         * at emit time. Upstream 0.1.1 contract: the client-modules boot table and
+         * the theme preference reach the served page through this event.
+         * @param table - Mutable row table; listeners append in activation order.
+         * @mode emit
+         */
+        'webserver/index-inject'(table: IndexInjection[]): void;
     }
 }
 /** Route match kind: 'exact' matches the pathname verbatim; 'prefix' p matches p and p/<anything>. */
@@ -128,5 +143,21 @@ export declare class WebServer extends Service {
      * @returns the transformed body.
      */
     applyIndexTaps(html: string): string;
+    /**
+     * Gather the structured injection table: one `webserver/index-inject` emit,
+     * every subscriber pushes its current rows. Fresh per call, so subscribers
+     * read live state (module graph, theme preference) at emit time.
+     * @returns rows in subscriber activation order.
+     */
+    collectIndexInjections(): IndexInjection[];
+    /**
+     * Render one index.html body: the structured injection table first, then
+     * the raw `tapIndex` transforms over the result. This is the upstream 0.1.1
+     * contract the `frontend-static` fallback owner calls on every index
+     * response — without it the served page would reject with a 400.
+     * @param html - the raw index.html body.
+     * @returns the transformed body.
+     */
+    renderIndex(html: string): string;
 }
 export default WebServer;

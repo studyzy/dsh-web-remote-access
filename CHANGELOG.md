@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-08-21
+
+### Fixed
+
+- 适配 dsh 0.1.1-rc.1(harness 更新后的 index 渲染契约):上游 `@deepseek-ai/dsh-host-webserver` 在 0.1.1 把 `applyIndexTaps` 扩展为 `renderIndex`(结构化 `webserver/index-inject` 注入表 + 原始 tap)。本 bundle 的 webserver fork 只保留了旧方法,而新的 `frontend-static` fallback 所有者调用 `ctx.webServer.renderIndex`,导致每个页面请求在 token 放行后抛错并返回 400 —— 页面完全无法打开。现在 fork 补齐了 `renderIndex`/`collectIndexInjections` 与 `webserver/index-inject` 事件,客户端模块引导表(`window.__DSH_BOOT__`)、主题注入与 `tapIndex` polyfill 都能正常渲染。
+- 适配 dsh 0.1.1-rc.1 的 `--no-open` 标志与 `openBrowser` 启动值:startup fork 现在解析 `--no-open` 并透传 `openBrowser`,避免无头服务器默认尝试打开浏览器,同时保留原生的 `--no-open` CLI 契约。
+- 远程浏览器通过局域网 IP 访问时,"设置 → 模型 / 插件"页面无法显示:客户端 `connection.isLoopback` 完全由 `location.hostname` 决定,局域网 IP 下为 `false`,设置界面因此落入进程内 "memory" 作用域,settings 镜像从不读取 Host(模型页报 "settings are unavailable in this browser")。现在当 `--web_token` 门禁启用时,向 index.html 注入脚本,在 `@deepseek-ai/dsh-client-connection` 提供 `connection` 服务时将其 `isLoopback` 置为 `true`,使已认证的远程浏览器呈现与回环访问一致的设置体验。
+
 ## [1.0.1] - 2026-08-19
 
 ### Fixed
@@ -30,5 +38,6 @@
 
 - 对外暴露的服务始终有令牌保护:绑定 `0.0.0.0` 时若未显式提供令牌,也会生成随机令牌,绝不无认证运行。
 
+[1.0.2]: https://github.com/studyzy/dsh-web-remote-access/releases/tag/v1.0.2
 [1.0.1]: https://github.com/studyzy/dsh-web-remote-access/releases/tag/v1.0.1
 [1.0.0]: https://github.com/studyzy/dsh-web-remote-access/releases/tag/v1.0.0
