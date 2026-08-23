@@ -114,7 +114,7 @@ describe('web command-line provider', () => {
       host: '127.0.0.1',
       port: 8080,
       trustedHosts: ['lab.internal', 'lab-2.internal', '10.0.0.9'],
-      webToken: '9mYik22Ajc1mvZZ3vNCU1o8njwn4jbeRLYNJH_0YW-o',
+      webToken: '',
     })
     expect(observed.readerConfig).toEqual(values)
     expect(observed.exits).toEqual([])
@@ -122,59 +122,45 @@ describe('web command-line provider', () => {
 
   it('publishes openBrowser: false for --no-open', async () => {
     const { values, observed } = await bootProvider(['--no-open', '--web_token', 'tok-123'])
-    expect(values).toEqual({ openBrowser: false, trustedHosts: [], webToken: 'tok-123' })
+    expect(values).toEqual({ openBrowser: false, trustedHosts: [], webToken: '' })
     expect(observed.exits).toEqual([])
   })
 
-  it('mints a fresh random token when no flag or environment token exists', async () => {
+  it('serves a loopback bind with no token when nothing is provided', async () => {
     startupInternals.mintRandomToken = () => 'random-tok-123'
     const { values, observed } = await bootProvider([])
-    expect(values).toEqual({ openBrowser: true, trustedHosts: [], webToken: 'random-tok-123' })
+    expect(values).toEqual({ openBrowser: true, trustedHosts: [], webToken: '' })
     expect(observed.readerConfig).toEqual({
       openBrowser: true,
       host: '127.0.0.1',
       port: 3080,
       trustedHosts: [],
-      webToken: 'random-tok-123',
+      webToken: '',
     })
     expect(observed.exits).toEqual([])
   })
 
-  it('reads the DSH_WEB_TOKEN environment variable when no flag is given', async () => {
-    startupInternals.envWebToken = () => 'env-tok-456'
-    const { values, observed } = await bootProvider([])
-    expect(values).toEqual({ openBrowser: true, trustedHosts: [], webToken: 'env-tok-456' })
-    expect(observed.readerConfig).toEqual({
-      openBrowser: true,
-      host: '127.0.0.1',
-      port: 3080,
-      trustedHosts: [],
-      webToken: 'env-tok-456',
-    })
-    expect(observed.exits).toEqual([])
-  })
-
-  it('prefers --web_token over the environment variable', async () => {
+  it('ignores --web_token and $DSH_WEB_TOKEN on a loopback bind', async () => {
     startupInternals.envWebToken = () => 'env-tok-456'
     const { values, observed } = await bootProvider(['--web_token', 'flag-tok-789'])
-    expect(values).toEqual({ openBrowser: true, trustedHosts: [], webToken: 'flag-tok-789' })
+    expect(values).toEqual({ openBrowser: true, trustedHosts: [], webToken: '' })
     expect(observed.readerConfig).toEqual({
       openBrowser: true,
       host: '127.0.0.1',
       port: 3080,
       trustedHosts: [],
-      webToken: 'flag-tok-789',
+      webToken: '',
     })
     expect(observed.exits).toEqual([])
   })
 
-  it('treats an empty flag or empty environment value as unset', async () => {
+  it('treats an empty flag or empty environment value as unset on an all-interfaces bind', async () => {
     startupInternals.mintRandomToken = () => 'random-tok-123'
     startupInternals.envWebToken = () => ''
-    const withEmptyFlag = await bootProvider(['--web_token', ''])
-    expect(withEmptyFlag.values).toEqual({ openBrowser: true, trustedHosts: [], webToken: 'random-tok-123' })
-    const withEmptyEnv = await bootProvider([])
-    expect(withEmptyEnv.values).toEqual({ openBrowser: true, trustedHosts: [], webToken: 'random-tok-123' })
+    const withEmptyFlag = await bootProvider(['--host', '0.0.0.0', '--web_token', ''])
+    expect(withEmptyFlag.values).toEqual({ openBrowser: true, host: '0.0.0.0', trustedHosts: [], webToken: 'random-tok-123' })
+    const withEmptyEnv = await bootProvider(['--host', '0.0.0.0'])
+    expect(withEmptyEnv.values).toEqual({ openBrowser: true, host: '0.0.0.0', trustedHosts: [], webToken: 'random-tok-123' })
   })
 
   it('prints its own help and leaves the consumer pending', async () => {
@@ -196,7 +182,7 @@ describe('web command-line provider', () => {
     expect(observed.exits).toEqual([1])
   })
 
-  it('allows an all-interfaces bind without --web_token (a token always exists)', async () => {
+  it('mints a fresh random token for an all-interfaces bind without --web_token', async () => {
     startupInternals.mintRandomToken = () => 'random-tok-123'
     const { values, observed } = await bootProvider(['--host', '0.0.0.0'])
     expect(values).toEqual({ openBrowser: true, host: '0.0.0.0', trustedHosts: [], webToken: 'random-tok-123' })
@@ -206,6 +192,34 @@ describe('web command-line provider', () => {
       port: 3080,
       trustedHosts: [],
       webToken: 'random-tok-123',
+    })
+    expect(observed.exits).toEqual([])
+  })
+
+  it('uses $DSH_WEB_TOKEN for an all-interfaces bind', async () => {
+    startupInternals.envWebToken = () => 'env-tok-456'
+    const { values, observed } = await bootProvider(['--host', '0.0.0.0'])
+    expect(values).toEqual({ openBrowser: true, host: '0.0.0.0', trustedHosts: [], webToken: 'env-tok-456' })
+    expect(observed.readerConfig).toEqual({
+      openBrowser: true,
+      host: '0.0.0.0',
+      port: 3080,
+      trustedHosts: [],
+      webToken: 'env-tok-456',
+    })
+    expect(observed.exits).toEqual([])
+  })
+
+  it('prefers --web_token over the environment variable on an all-interfaces bind', async () => {
+    startupInternals.envWebToken = () => 'env-tok-456'
+    const { values, observed } = await bootProvider(['--host', '0.0.0.0', '--web_token', 'flag-tok-789'])
+    expect(values).toEqual({ openBrowser: true, host: '0.0.0.0', trustedHosts: [], webToken: 'flag-tok-789' })
+    expect(observed.readerConfig).toEqual({
+      openBrowser: true,
+      host: '0.0.0.0',
+      port: 3080,
+      trustedHosts: [],
+      webToken: 'flag-tok-789',
     })
     expect(observed.exits).toEqual([])
   })

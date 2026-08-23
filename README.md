@@ -13,7 +13,7 @@
   <a href="https://github.com/studyzy/dsh-web-remote-access"><img src="https://img.shields.io/github/stars/studyzy/dsh-web-remote-access" alt="GitHub stars"></a>
 </p>
 
-一个开箱即用的 [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) 插件:解锁 `dsh web` 的远程访问能力(`--host 0.0.0.0`),并让 Web UI **始终**处于访问令牌(web token)保护之下——页面、`/api` RPC、WebSocket 下行全部在门卫之后。
+一个开箱即用的 [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) 插件:解锁 `dsh web` 的远程访问能力(`--host 0.0.0.0`),并让对外暴露的 Web UI **始终**处于访问令牌(web token)保护之下——页面、`/api` RPC、WebSocket 下行全部在门卫之后;回环访问则无需令牌,本地使用零打扰。
 
 > 开源项目:[github.com/studyzy/dsh-web-remote-access](https://github.com/studyzy/dsh-web-remote-access) · MIT 协议
 
@@ -41,7 +41,7 @@
 - 🛡️ **全表面门卫**:所有请求(页面、`/api` RPC、WebSocket 下行)都经过 web token 门卫:
   1. 首次打开 `http://<host>:<port>/?web_token=<token>` → 服务器 302 跳转到干净路径,并下发会话 Cookie(`dsh_web_token`,`HttpOnly`, `SameSite=Lax`,浏览器关闭即失效)。
   2. 之后请求携带 Cookie 正常访问,直到浏览器关闭。
-- 🔑 **令牌永远存在**:解析顺序 `--web_token` → 环境变量 `$DSH_WEB_TOKEN` → 启动时随机生成的令牌。
+- 🔑 **令牌仅对远程绑定启用**:`--host 0.0.0.0` 时,解析顺序 `--web_token` → 环境变量 `$DSH_WEB_TOKEN` → 启动时随机生成的令牌;回环绑定不启用门禁(令牌为空)。
 - 🖨️ **一键直达**:启动时打印可直接打开的 URL(含 `?web_token=`),绑定所有网卡时还会打印 LAN 地址。
 - ⏱️ **常数时间比较**:令牌校验使用 `sha256` + `timingSafeEqual`,不泄漏令牌长度与内容。
 - 📱 **PWA 兼容**:`/manifest.webmanifest` 豁免令牌,安装检测不受影响。
@@ -82,7 +82,7 @@ dsh plugin --profile web remove @studyzy/dsh-web-remote-access
 dsh --profile web --host 0.0.0.0 --web_token <token>     # 远程,固定令牌
 DSH_WEB_TOKEN=<token> dsh --profile web --host 0.0.0.0    # 远程,令牌来自环境变量
 dsh --profile web --host 0.0.0.0                          # 远程,随机令牌(打印在 URL 里)
-dsh --profile web                                        # 回环,随机令牌(打印在 URL 里)
+dsh --profile web                                        # 回环,无需令牌
 ```
 
 启动后终端会打印类似这样的 URL(可直接打开):
@@ -99,7 +99,7 @@ dsh web: http://127.0.0.1:3080/?web_token=<token> (LAN: http://192.168.1.5:3080/
 | `--port <port>` | 监听端口;传 `0` 由操作系统分配空闲端口。默认 `3080` |
 | `--no-open` | 启动后不在默认浏览器中打开 Web UI(无头服务器常用) |
 | `--trusted-host <authority...>` | 额外信任的权威(host 或 host:port,可重复),用于 `/api` 浏览器信任围栏 |
-| `--web_token <token>` | 访问令牌;缺省时回退到 `$DSH_WEB_TOKEN`,再回退到启动时随机生成的令牌 |
+| `--web_token <token>` | 访问令牌;**仅对 `--host 0.0.0.0` 绑定启用**;缺省时回退到 `$DSH_WEB_TOKEN`,再回退到启动时随机生成的令牌 |
 
 ### 环境变量
 
@@ -113,13 +113,13 @@ dsh web: http://127.0.0.1:3080/?web_token=<token> (LAN: http://192.168.1.5:3080/
 
 | 行 | 替换为 | 作用 |
 |---|---|---|
-| `web-startup` | `@studyzy/dsh-web-remote-access/startup` | fork `@deepseek-ai/dsh-web-app/startup`,新增 `--web_token`、`$DSH_WEB_TOKEN`、随机令牌兜底;提供同名 `webStartup` 服务,并带一个**始终存在**的 `webToken` |
+| `web-startup` | `@studyzy/dsh-web-remote-access/startup` | fork `@deepseek-ai/dsh-web-app/startup`,新增 `--web_token`、`$DSH_WEB_TOKEN`、随机令牌兜底;提供同名 `webStartup` 服务,`webToken` 仅对 `0.0.0.0` 绑定非空 |
 | `webserver` | `@studyzy/dsh-web-remote-access/webserver` | fork `@deepseek-ai/dsh-host-webserver`,保持 `ctx.webServer` 契约不变,增加:路由匹配前的令牌门卫(含升级路径)、manifest 豁免、对已认证 `/api` 请求的回环呈现 |
 | `web-runtime` 打印 | `@studyzy/dsh-web-remote-access/url` | 打印带 `?web_token=` 的 URL 行 |
 | —(新增行) | `@studyzy/dsh-web-remote-access/polyfill` | 向 index.html 注入 `crypto.randomUUID` polyfill(非安全上下文支持) |
 | —(新增行) | `@studyzy/dsh-web-remote-access/loopback` | 向 index.html 注入脚本,让已认证的远程浏览器以回环视图呈现(见下方"安全说明") |
 
-令牌解析为 `--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成,因此门卫始终开启,打印的 URL 始终能直接打开。绑定所有网卡时,`/api` 信任围栏推导出的 LAN IP 字面量也就是打印的 LAN URL 所用的地址。
+令牌仅对远程绑定生效:绑定 `0.0.0.0` 时解析为 `--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成,因此对外暴露的服务门卫始终开启,打印的 URL 始终能直接打开;回环绑定令牌为空,打印的 URL 直接可开。绑定所有网卡时,`/api` 信任围栏推导出的 LAN IP 字面量也就是打印的 LAN URL 所用的地址。
 
 ### 请求流程
 
@@ -189,11 +189,13 @@ pnpm build      # tsc -> lib/(ESM)
 
 ### 4. 可以不用令牌吗?
 
-- 不可以,这是设计使然:令牌**永远存在**(随机令牌兜底),保证对外暴露的服务绝不无认证运行。若仅需回环访问,直接 `dsh --profile web` 即可,随机令牌只影响 URL 打印,不影响使用。
+- 回环访问(`dsh --profile web`,默认绑定)无需令牌,本地使用零打扰。
+- 远程访问(`--host 0.0.0.0`)不可以不用令牌:这是设计使然——对外暴露的服务绝不无认证运行,未显式指定时也会生成随机令牌(打印在 URL 里)。
 
 ### 5. 和反代(如 Nginx/Caddy)怎么配合?
 
-- 推荐:反代终结 TLS 后转发到 `dsh --profile web --host 127.0.0.1`(回环绑定),令牌门卫照常生效;也可让反代自己处理认证。详见 [SECURITY.md](SECURITY.md)。
+- 回环绑定(`--host 127.0.0.1`)不再自带令牌门卫:若经反代暴露,请由反代自行处理认证(如 Basic Auth / OAuth)。
+- 若希望保留本插件的令牌门卫,反代应把请求转发到绑定 `--host 0.0.0.0` 的实例,并把带 `?web_token=` 的授权 URL 交给终端用户。详见 [SECURITY.md](SECURITY.md)。
 
 ### 6. 为什么 WebSocket 一直连不上?
 

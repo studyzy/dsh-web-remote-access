@@ -12,7 +12,7 @@
 
 - **这是纯 HTTP 上的共享密钥门卫,不是完整的认证/授权层**。它没有账号体系、没有用户隔离、没有 TLS。
 - 令牌即密钥:持有令牌(或持有已授权会话的 Cookie)即可完全访问 Web UI 及其 `/api` 配置平面(`settings.*`、`credentials.*`、`agentPreset.*`、`host.*`、`llm.discoverModels`)。
-- 令牌**永远存在**:`--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成。对外绑定(`--host 0.0.0.0`)时绝不会无认证运行。
+- 令牌**仅对对外绑定生效**:绑定 `--host 0.0.0.0` 时,`--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成,绝不会无认证运行;回环绑定(默认/`--host 127.0.0.1`)不启用令牌门禁,仅供本地访问。
 - 令牌比较为常数时间(`sha256` + `timingSafeEqual`),不泄漏令牌长度与内容。
 - 会话 Cookie 属性:`HttpOnly`、`SameSite=Lax`、`Path=/`,浏览器关闭即失效(会话 Cookie)。
 - `/manifest.webmanifest`(仅 GET/HEAD)为公开静态元数据,豁免令牌;其余所有路径(应用、`/api`、WebSocket 升级)都在门卫之后。

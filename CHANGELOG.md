@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 本地回环访问不再要求 web token:此前 `webToken` 永远存在(无显式令牌时也随机生成),导致安装插件后 `dsh --profile web` 默认回环访问也被门禁。现在令牌仅对 `--host 0.0.0.0` 绑定启用(`--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成);回环绑定(默认或 `--host 127.0.0.1`)令牌为空、不启用门禁,即使显式传入 `--web_token` / `$DSH_WEB_TOKEN` 也忽略。
+
 ### Added
 
 - 浏览器 e2e(`tests/e2e/`, `pnpm test:e2e`):在真实 `dsh` CLI 链路上验证插件在最新 dsh 下可用——隔离 `$DSH_HOME` 中通过 `dsh plugin --profile web add` 安装 bundle,以 `--host 0.0.0.0 --web_token` 启动,断言启动行内嵌 `?web_token=` 授权 URL、无 Cookie/令牌时所有表面(页面、`/api`、WebSocket 升级)返回 401、`?web_token=` 授权会话 Cookie(302)、SPA 在 Cookie 下正常返回且注入 `crypto.randomUUID` polyfill、`/manifest.webmanifest` 保持公开、LAN 网卡上的门禁一致,并由 Playwright 通过**局域网 IP**(而非回环地址)启动 WebUI 断言零页面错误——回环是安全上下文,`crypto.randomUUID` 原生存在,只有局域网 IP 下的非安全上下文才会真正触发 polyfill。CI 新增 `e2e` job 对 `@deepseek-ai/dsh@next` 运行,无需密钥。

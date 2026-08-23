@@ -3,10 +3,11 @@
  * parses the `dsh --profile web` flag family (`--host`, `--port`,
  * `--trusted-host`, `--web_token`) and its `--help` text, then provides the
  * immutable values as {@link WEB_STARTUP_SERVICE}. Ordinary rows inject that
- * service before reading it from lazy config. The web token always exists:
- * the explicit `--web_token` wins, then `$DSH_WEB_TOKEN`, then a fresh random
- * token minted at startup — so an all-interfaces bind always runs behind the
- * gate and the printed URL always opens directly.
+ * service before reading it from lazy config. The web token exists only for
+ * an all-interfaces bind (`--host 0.0.0.0`): the explicit `--web_token` wins,
+ * then `$DSH_WEB_TOKEN`, then a fresh random token minted at startup. A
+ * loopback bind runs token-less (`webToken` ''), so its printed URL opens
+ * directly without any grant.
  *
  * The flag parse and bounded-exit wiring is a vendored port of
  * `@deepseek-ai/dsh-cmdline`'s `parseCmdline` (MIT). This bundle forks the
@@ -34,7 +35,7 @@ export interface WebStartupValues {
     port?: number;
     /** Explicit `--trusted-host` authorities, in argument order. */
     trustedHosts: string[];
-    /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one. */
+    /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one on an all-interfaces bind; empty (no gate) on a loopback bind. */
     webToken: string;
 }
 /** Test hooks: randomness, the environment seam, and the output streams. */

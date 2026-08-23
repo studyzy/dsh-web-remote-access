@@ -3,10 +3,11 @@
  * parses the `dsh --profile web` flag family (`--host`, `--port`,
  * `--trusted-host`, `--web_token`) and its `--help` text, then provides the
  * immutable values as {@link WEB_STARTUP_SERVICE}. Ordinary rows inject that
- * service before reading it from lazy config. The web token always exists:
- * the explicit `--web_token` wins, then `$DSH_WEB_TOKEN`, then a fresh random
- * token minted at startup — so an all-interfaces bind always runs behind the
- * gate and the printed URL always opens directly.
+ * service before reading it from lazy config. The web token exists only for
+ * an all-interfaces bind (`--host 0.0.0.0`): the explicit `--web_token` wins,
+ * then `$DSH_WEB_TOKEN`, then a fresh random token minted at startup. A
+ * loopback bind runs token-less (`webToken` ''), so its printed URL opens
+ * directly without any grant.
  *
  * The flag parse and bounded-exit wiring is a vendored port of
  * `@deepseek-ai/dsh-cmdline`'s `parseCmdline` (MIT). This bundle forks the
@@ -42,7 +43,7 @@ export interface WebStartupValues {
   port?: number
   /** Explicit `--trusted-host` authorities, in argument order. */
   trustedHosts: string[]
-  /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one. */
+  /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one on an all-interfaces bind; empty (no gate) on a loopback bind. */
   webToken: string
 }
 
@@ -84,11 +85,11 @@ function webCommand(): Command {
     .option('--no-open', 'do not open the Web UI in the default browser')
     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
-    .option('--web_token <token>', 'require this token to open the Web UI (first visit via ?web_token= grants a session cookie); defaults to $DSH_WEB_TOKEN, or a fresh random token')
+    .option('--web_token <token>', 'require this token to open the Web UI when binding 0.0.0.0 (first visit via ?web_token= grants a session cookie); defaults to $DSH_WEB_TOKEN, or a fresh random token')
     .addHelpText('after', `
 Examples:
-  dsh --profile web                          serve on the composed host and port; prints a random-token URL
-  dsh --profile web --port 8080              serve on another port
+  dsh --profile web                          serve on the loopback bind, no token
+  dsh --profile web --port 8080              serve on another port (loopback, no token)
   dsh --profile web --host 0.0.0.0           serve on all interfaces behind a random token (or $DSH_WEB_TOKEN)
   dsh --profile web --host 0.0.0.0 --web_token <token>   serve on all interfaces behind a fixed token
 `)
@@ -205,7 +206,12 @@ export function apply(ctx: Context): void {
       ? options.web_token
       : undefined
     const env = internals.envWebToken()
-    const webToken = explicit ?? (env !== undefined && env !== '' ? env : internals.mintRandomToken())
+    const envToken = env !== undefined && env !== '' ? env : undefined
+    // The token gate exists only for an all-interfaces bind; a loopback bind
+    // runs token-less even when the user named --web_token / $DSH_WEB_TOKEN.
+    const webToken = options.host === '0.0.0.0'
+      ? explicit ?? envToken ?? internals.mintRandomToken()
+      : ''
     ctx.provide(WEB_STARTUP_SERVICE, {
       openBrowser: options.open,
       ...options.host !== undefined && { host: options.host },

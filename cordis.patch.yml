@@ -6,8 +6,8 @@
 
 # The web-app startup row rejects --host 0.0.0.0 and knows no --web_token;
 # replace it with this bundle's startup fork, which serves the same
-# `webStartup` service plus `webToken`, and requires --web_token for an
-# all-interfaces bind.
+# `webStartup` service plus `webToken`, and enforces a web token (explicit,
+# env, or random) for an all-interfaces bind — loopback binds run token-less.
 - id: web-startup
   disabled: true
 
