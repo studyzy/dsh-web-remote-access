@@ -1,9 +1,9 @@
 /**
- * @studyzy/dsh-web-remote-access/url — the web URL line printer. Replaces the stock web-app
- * URL print (which the bundle patch disables) so a configured `--web_token`
- * shows up in the printed URL: opening the printed line is exactly the
- * `?web_token=` grant flow, and the LAN variant mirrors the /api trust
- * snapshot (non-internal IPv4 literals for an all-interfaces bind).
+ * @studyzy/dsh-web-remote-access/url — the web URL line printer. Replaces the
+ * stock web-app URL print (which the bundle patch disables) so the line names
+ * the address the server actually bound, including the harness launch token
+ * (`?token=`) whose first-open exchange mints the session cookie the Web UI
+ * and the `/api` bridge require.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
@@ -11,12 +11,10 @@ import z from '@deepseek-ai/schemastery';
 export declare const name = "web-token-url";
 /** Services required before the URL can be read. */
 export declare const inject: string[];
-/** Plugin config: print the URL line, and the access token to embed. */
+/** Plugin config: print the URL line. */
 export interface Config {
     /** Print the URL line on activation; a non-interactive layer can turn it off. */
     printUrl: boolean;
-    /** The web token; when set, the printed URLs carry `?web_token=` so they open directly. */
-    webToken: string;
 }
 export declare const Config: z<Config>;
 /**

@@ -1,27 +1,33 @@
-# dsh-web-remote-access bundle patch: remote Web access behind a --web_token gate.
+# dsh-web-remote-access bundle patch: remote Web access for `dsh web`.
 # Applied after the dsh-base and dsh-web-app layers. Rows here override the
-# web-app rows by id; replacements mount this bundle's forked plugins under
-# new ids. The webStartup service contract is preserved (now carrying an
-# optional webToken), so the web-app rows that read it keep working.
+# web-app rows by id; replacements mount this bundle's plugins under new ids.
+# The webStartup service contract is preserved, so the web-app rows that read
+# it keep working.
+#
+# Remote browsers are gated by the harness's own launch-token session cookie
+# (dsh 0.2.x), which the printed URL carries as `?token=`. This bundle adds no
+# token of its own: it makes the remote bind reachable at all.
 
-# The web-app startup row rejects --host 0.0.0.0 and knows no --web_token;
-# replace it with this bundle's startup fork, which serves the same
-# `webStartup` service plus `webToken`, and enforces a web token (explicit,
-# env, or random) for an all-interfaces bind — loopback binds run token-less.
+# The web-app startup row rejects --host 0.0.0.0 outright (wildcard binds would
+# expose remote code execution to the network); replace it with this bundle's
+# startup fork, which resolves the wildcard to a concrete interface address and
+# serves the same `webStartup` service (now carrying `remote`).
 - id: web-startup
   disabled: true
 
-# The stock webserver has no request gate; replace it with the forked
-# implementation that provides the same ctx.webServer contract and enforces
-# the token gate before route matching (covers the SPA fallback, the /api RPC
-# bridge, and the WebSocket downlink).
-- id: webserver
-  disabled: true
+# web-app's URL line prints the composed host, which is the loopback default
+# rather than the address a wildcard bind resolved to; this bundle's url row
+# prints the bound address with the harness `?token=` grant. The stock browser
+# handoff opens that same URL, so it stays mounted. The model-visible surface
+# context (web-surface prompt and DSH_WEB_URL bash variable) stays mounted too.
+- id: connection
+  config:
+    # Every API request and upgrade passes the loopback, listener-bind, or
+    # trustedHosts policy; the session cookie lifetime is the harness default
+    # (30 days) unless the invocation named one (browsers cap it at 400).
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+    cookieMaxAgeDays: !!js ctx.webStartup.cookieMaxAgeDays ?? 30
 
-# web-app's URL line prints the token-less URL; this bundle's url row prints
-# the `?web_token=` variant so the printed line opens directly. The
-# model-visible surface context (web-surface prompt and DSH_WEB_URL bash
-# variable) stays mounted.
 - id: web-runtime
   config:
     openBrowser: !!js ctx.webStartup.openBrowser
@@ -30,42 +36,30 @@
     trustedHosts: !!js ctx.webStartup.trustedHosts
 
 - insert:
-    - id: web-token-startup
+    - id: web-remote-startup
       name: '@studyzy/dsh-web-remote-access/startup'
 
-    - id: webserver-gated
-      name: '@studyzy/dsh-web-remote-access/webserver'
-      inject: [webStartup]
-      config:
-        host: !!js ctx.webStartup.host ?? '127.0.0.1'
-        port: !!js ctx.webStartup.port ?? 3080
-        webToken: !!js ctx.webStartup.webToken ?? ''
-
-    - id: web-token-url
+    - id: web-remote-url
       name: '@studyzy/dsh-web-remote-access/url'
       inject: [webStartup, webServer]
       config:
         printUrl: true
-        webToken: !!js ctx.webStartup.webToken ?? ''
 
     # Insecure-origin polyfill: crypto.randomUUID is secure-context-only and
-    # undefined over plain HTTP on a LAN IP; the tap injects a getRandomValues
-    # fallback into the served index so client bundles (RPC ids, attachments)
-    # do not throw — which also keeps the WebSocket readiness handshake alive.
-    - id: web-token-polyfill
+    # undefined over plain HTTP on a LAN address; the tap injects a
+    # getRandomValues fallback into the served index so client bundles (RPC ids,
+    # attachments) do not throw — which also keeps the WebSocket readiness
+    # handshake alive. Only active on a non-loopback bind.
+    - id: web-remote-polyfill
       name: '@studyzy/dsh-web-remote-access/polyfill'
       inject: [webStartup, webServer]
       config:
-        webToken: !!js ctx.webStartup.webToken ?? ''
+        remote: !!js ctx.webStartup.remote ?? false
 
-    # Remote-browser loopback view: the client derives connection.isLoopback
-    # from location.hostname, so a LAN browser falls into the settings "memory"
-    # scope and the Models/Plugins pages report "settings are unavailable".
-    # The tap injects a script that flips isLoopback on the provided connection
-    # handle (the token gate already authenticated the client, and the gated
-    # webserver rewrites /api authority to loopback so the RPCs would succeed).
-    - id: web-token-loopback
-      name: '@studyzy/dsh-web-remote-access/loopback'
-      inject: [webStartup, webServer]
-      config:
-        webToken: !!js ctx.webStartup.webToken ?? ''
+    # DISABLED FOR DIAGNOSIS: the isLoopback override wrap correlates with the
+    # documentpreview activation failure on remote binds.
+    # - id: web-remote-loopback
+    #   name: '@studyzy/dsh-web-remote-access/loopback'
+    #   inject: [webStartup, webServer]
+    #   config:
+    #     remote: !!js ctx.webStartup.remote ?? false

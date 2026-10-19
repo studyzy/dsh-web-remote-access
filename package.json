@@ -1,6 +1,6 @@
 {
   "name": "@studyzy/dsh-web-remote-access",
-  "description": "Out-of-tree dsh web-profile bundle: enables --host 0.0.0.0 and gates the Web UI behind a --web_token access token (cookie after first ?web_token= open). Forks @deepseek-ai/dsh-host-webserver and @deepseek-ai/dsh-web-app/startup.",
+  "description": "Out-of-tree dsh web-profile bundle: enables dsh web remote access by resolving the --host 0.0.0.0 bind (which upstream rejects) to a concrete interface address, printing that URL with the harness launch token, and polyfilling crypto.randomUUID for insecure LAN origins. Forks @deepseek-ai/dsh-web-app/startup.",
   "version": "1.0.2",
   "keywords": [
     "dsh",
@@ -42,10 +42,6 @@
     "./startup": {
       "types": "./lib/startup.d.ts",
       "default": "./lib/startup.js"
-    },
-    "./webserver": {
-      "types": "./lib/webserver.d.ts",
-      "default": "./lib/webserver.js"
     },
     "./url": {
       "types": "./lib/url.d.ts",

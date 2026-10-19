@@ -1,8 +1,8 @@
 /**
- * web-token-polyfill index tap: the served index gets a `crypto.randomUUID`
+ * web-remote-polyfill index tap: the served index gets a `crypto.randomUUID`
  * polyfill backed by `crypto.getRandomValues` (available on insecure origins),
  * injected before `</head>` so it runs ahead of every client bundle. Inert
- * without a configured web token.
+ * on a loopback bind.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,12 +22,12 @@ function fakeWebServer(): { taps: ((html: string) => string)[]; server: unknown 
   }
 }
 
-describe('web-token-polyfill', () => {
+describe('web-remote-polyfill', () => {
   it('injects a getRandomValues-backed randomUUID polyfill before </head>', async () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: 'tok-abc' }))
+    apply(ctx, new Config({ remote: true }))
     await ctx.fiber.dispose()
     expect(taps.length).toBe(1)
     const out = taps[0]!('<html><head><title>t</title></head><body></body></html>')
@@ -37,11 +37,11 @@ describe('web-token-polyfill', () => {
     expect(out.indexOf('crypto.randomUUID') < out.indexOf('</head>')).toBe(true)
   })
 
-  it('is inert without a configured web token', async () => {
+  it('is inert on a loopback bind', async () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: '' }))
+    apply(ctx, new Config({ remote: false }))
     await ctx.fiber.dispose()
     expect(taps).toEqual([])
   })

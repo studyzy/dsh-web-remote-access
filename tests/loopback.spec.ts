@@ -1,5 +1,5 @@
 /**
- * web-token-loopback index tap: the served index gets a script (before
+ * web-remote-loopback index tap: the served index gets a script (before
  * `</head>`) that forces `connection.isLoopback` to true for remote browsers,
  * so the settings surface runs in "host" persistence instead of the
  * process-local "memory" scope. Inert without a configured web token.
@@ -31,12 +31,12 @@ function scriptBody(html: string): string {
   return match[1]!
 }
 
-describe('web-token-loopback', () => {
+describe('web-remote-loopback', () => {
   it('injects the isLoopback override script before </head>', async () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: 'tok-abc' }))
+    apply(ctx, new Config({ remote: true }))
     await ctx.fiber.dispose()
     expect(taps.length).toBe(1)
     const out = taps[0]!('<html><head><title>t</title></head><body></body></html>')
@@ -46,11 +46,11 @@ describe('web-token-loopback', () => {
     expect(out.indexOf('@deepseek-ai/dsh-client-connection') < out.indexOf('</head>')).toBe(true)
   })
 
-  it('is inert without a configured web token', async () => {
+  it('is inert on a loopback bind', async () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: '' }))
+    apply(ctx, new Config({ remote: false }))
     await ctx.fiber.dispose()
     expect(taps).toEqual([])
   })
@@ -81,7 +81,7 @@ describe('web-token-loopback', () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: 'tok-abc' }))
+    apply(ctx, new Config({ remote: true }))
     const html = taps[0]!('<html><head></head><body></body></html>')
     await ctx.fiber.dispose()
 
@@ -141,7 +141,7 @@ describe('web-token-loopback', () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: 'tok-abc' }))
+    apply(ctx, new Config({ remote: true }))
     const html = taps[0]!('<html><head></head><body></body></html>')
     await ctx.fiber.dispose()
 
@@ -160,7 +160,7 @@ describe('web-token-loopback', () => {
     const ctx = new Context()
     const { taps, server } = fakeWebServer()
     ctx.provide('webServer', server)
-    apply(ctx, new Config({ webToken: 'tok-abc' }))
+    apply(ctx, new Config({ remote: true }))
     const html = taps[0]!('<html><head></head><body></body></html>')
     await ctx.fiber.dispose()
 

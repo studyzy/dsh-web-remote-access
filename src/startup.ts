@@ -1,13 +1,17 @@
 /**
  * @studyzy/dsh-web-remote-access/startup — a fork of `@deepseek-ai/dsh-web-app/startup` that
  * parses the `dsh --profile web` flag family (`--host`, `--port`,
- * `--trusted-host`, `--web_token`) and its `--help` text, then provides the
- * immutable values as {@link WEB_STARTUP_SERVICE}. Ordinary rows inject that
- * service before reading it from lazy config. The web token exists only for
- * an all-interfaces bind (`--host 0.0.0.0`): the explicit `--web_token` wins,
- * then `$DSH_WEB_TOKEN`, then a fresh random token minted at startup. A
- * loopback bind runs token-less (`webToken` ''), so its printed URL opens
- * directly without any grant.
+ * `--trusted-host`) and its `--help` text, then provides the immutable values
+ * as {@link WEB_STARTUP_SERVICE}. Ordinary rows inject that service before
+ * reading it from lazy config.
+ *
+ * The one divergence from upstream: upstream rejects a wildcard bind
+ * (`--host 0.0.0.0`) outright, because binding every interface would expose
+ * remote code execution to the network, and tells the user to name a concrete
+ * interface address instead. This fork keeps the convenient `--host 0.0.0.0`
+ * spelling and resolves it to this machine's first non-internal IPv4 address,
+ * so the stock webserver row binds a concrete address while remote clients are
+ * still gated by the harness's own launch-token session cookie.
  *
  * The flag parse and bounded-exit wiring is a vendored port of
  * `@deepseek-ai/dsh-cmdline`'s `parseCmdline` (MIT). This bundle forks the
@@ -17,7 +21,7 @@
  * keeps consumers install-clean and independent of rc churn.
  */
 
-import { randomBytes } from 'node:crypto'
+import { networkInterfaces } from 'node:os'
 import { Command } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -30,9 +34,6 @@ export const inject = ['cmdlineArgs']
 /** Service provided by this ordinary plugin and injected by flag-configured rows. */
 export const WEB_STARTUP_SERVICE = 'webStartup'
 
-/** Environment variable that supplies the web token when no `--web_token` is given. */
-export const WEB_TOKEN_ENV = 'DSH_WEB_TOKEN'
-
 /** What the web rows read from {@link WEB_STARTUP_SERVICE}. */
 export interface WebStartupValues {
   /** Whether this invocation opens the default browser after startup. */
@@ -41,10 +42,12 @@ export interface WebStartupValues {
   host?: string
   /** `--port`, absent when the invocation did not name one. */
   port?: number
+  /** `--cookie-max-age-days`, absent when the invocation did not name one (harness default: 30). */
+  cookieMaxAgeDays?: number
   /** Explicit `--trusted-host` authorities, in argument order. */
   trustedHosts: string[]
-  /** The active web token: `--web_token`, else `$DSH_WEB_TOKEN`, else a fresh random one on an all-interfaces bind; empty (no gate) on a loopback bind. */
-  webToken: string
+  /** Whether the resolved bind address serves beyond this machine (a non-loopback literal). */
+  remote: boolean
 }
 
 /** The web flag family, as commander parsed it. */
@@ -53,23 +56,30 @@ interface WebOptions {
   open: boolean
   port?: string
   trustedHost?: string[]
-  web_token?: string
+  cookieMaxAgeDays?: string
 }
 
-/** Test hooks: randomness, the environment seam, and the output streams. */
+/** Test hooks: the interface probe and the output streams. */
 export const internals: {
-  /** Mint the random fallback token; randomBytes(32) → base64url by default. */
-  mintRandomToken: () => string
-  /** Read the `DSH_WEB_TOKEN` environment variable. */
-  envWebToken: () => string | undefined
+  /** Non-internal IPv4 addresses of this machine; tests replace this to fix the set. */
+  lanAddresses: () => string[]
   /** Process stream commander output is written to; tests replace these to capture text. */
   stdout: { write(chunk: string): unknown }
   stderr: { write(chunk: string): unknown }
 } = {
-  mintRandomToken: () => randomBytes(32).toString('base64url'),
-  envWebToken: () => process.env[WEB_TOKEN_ENV],
+  lanAddresses: () => Object.values(networkInterfaces()).flat()
+    .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
+    .map(iface => iface.address),
   stdout: process.stdout,
   stderr: process.stderr,
+}
+
+/** Bind literals that request every interface at once. */
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '::ffff:0.0.0.0'])
+
+/** Whether a bind literal names the local loopback authority. */
+function isLoopbackLiteral(host: string): boolean {
+  return host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host)
 }
 
 /**
@@ -81,17 +91,18 @@ function webCommand(): Command {
     .name('dsh --profile web')
     .description('Serve the DeepSeek Harness browser UI.')
     .helpOption('-h, --help', 'show this help')
-    .option('--host <host>', 'bind host')
+    .option('--host <host>', 'bind address: a concrete IPv4/IPv6 literal of a local interface; 0.0.0.0 resolves to this machine\'s LAN address')
     .option('--no-open', 'do not open the Web UI in the default browser')
     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
-    .option('--web_token <token>', 'require this token to open the Web UI when binding 0.0.0.0 (first visit via ?web_token= grants a session cookie); defaults to $DSH_WEB_TOKEN, or a fresh random token')
+    .option('--cookie-max-age-days <days>', 'lifetime of the harness session cookie in days (harness default: 30; browsers cap it at 400)')
     .addHelpText('after', `
 Examples:
-  dsh --profile web                          serve on the loopback bind, no token
-  dsh --profile web --port 8080              serve on another port (loopback, no token)
-  dsh --profile web --host 0.0.0.0           serve on all interfaces behind a random token (or $DSH_WEB_TOKEN)
-  dsh --profile web --host 0.0.0.0 --web_token <token>   serve on all interfaces behind a fixed token
+  dsh --profile web                          serve on the loopback bind
+  dsh --profile web --port 8080              serve on another loopback port
+  dsh --profile web --host 0.0.0.0           serve on this machine\'s LAN address (remote browsers need the printed URL)
+  dsh --profile web --host 10.0.0.7          serve on one named interface address
+  dsh --profile web --cookie-max-age-days 400   keep remote browsers authorized for 400 days
 `)
 }
 
@@ -202,22 +213,28 @@ export function apply(ctx: Context): void {
     if (options.port !== undefined && !/^\d+$/.test(options.port)) {
       program.error(`error: --port must be a number, got ${JSON.stringify(options.port)}`)
     }
-    const explicit = options.web_token !== undefined && options.web_token !== ''
-      ? options.web_token
-      : undefined
-    const env = internals.envWebToken()
-    const envToken = env !== undefined && env !== '' ? env : undefined
-    // The token gate exists only for an all-interfaces bind; a loopback bind
-    // runs token-less even when the user named --web_token / $DSH_WEB_TOKEN.
-    const webToken = options.host === '0.0.0.0'
-      ? explicit ?? envToken ?? internals.mintRandomToken()
-      : ''
+    if (options.cookieMaxAgeDays !== undefined && !/^\d+$/.test(options.cookieMaxAgeDays)) {
+      program.error(`error: --cookie-max-age-days must be a number, got ${JSON.stringify(options.cookieMaxAgeDays)}`)
+    }
+    // Upstream refuses a wildcard bind; resolve it to a concrete interface
+    // address instead of failing the invocation, so the stock webserver row
+    // binds one address and the harness trust fence accepts it as the bind
+    // authority (no --trusted-host entry needed).
+    let host = options.host
+    if (host !== undefined && WILDCARD_HOSTS.has(host)) {
+      const lan = internals.lanAddresses()[0]
+      if (lan === undefined) {
+        program.error(`error: --host ${host} needs a non-internal IPv4 address on this machine; none found`)
+      }
+      host = lan
+    }
     ctx.provide(WEB_STARTUP_SERVICE, {
       openBrowser: options.open,
-      ...options.host !== undefined && { host: options.host },
+      ...host !== undefined && { host },
       ...options.port !== undefined && { port: Number(options.port) },
+      ...options.cookieMaxAgeDays !== undefined && { cookieMaxAgeDays: Number(options.cookieMaxAgeDays) },
       trustedHosts: options.trustedHost ?? [],
-      webToken,
+      remote: host !== undefined && !isLoopbackLiteral(host),
     } satisfies WebStartupValues)
   })
   parseCmdline(ctx, program)

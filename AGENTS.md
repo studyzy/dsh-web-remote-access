@@ -4,7 +4,7 @@ This file provides guidance to CodeBuddy Code when working with code in this rep
 
 ## What this is
 
-`@studyzy/dsh-web-remote-access` is an out-of-tree **dsh bundle** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): it enables `dsh web` remote access (`--host 0.0.0.0`) and gates the whole Web UI behind a `--web_token` access token. The harness source is never modified — everything is implemented as a Cordis bundle (patch layer) that disables stock `web`-profile rows and mounts this package's forked plugins in their place. Bundle layering: `dsh-base` → `dsh-web-app` → `@studyzy/dsh-web-remote-access`.
+`@studyzy/dsh-web-remote-access` is an out-of-tree **dsh bundle** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): it enables `dsh web` remote access (`--host 0.0.0.0`), which upstream refuses as a wildcard bind, by resolving the wildcard to a concrete interface address. Remote browsers are gated by the harness's own launch-token session cookie (`?token=`), not by a token of this package's. The harness source is never modified — everything is implemented as a Cordis bundle (patch layer) that swaps the stock `web-startup` row and mounts this package's plugins. Bundle layering: `dsh-base` → `dsh-web-app` → `@studyzy/dsh-web-remote-access`.
 
 ## Commands
 
@@ -16,8 +16,8 @@ pnpm build                          # tsc -p tsconfig.json → lib/ (ESM output,
 pnpm test                           # vitest run (all tests)
 pnpm test:e2e                       # browser e2e against a REAL dsh CLI (needs global dsh + Playwright chromium)
 pnpm test:e2e:local                 # browser e2e against the developer's real ~/.dsh web profile
-pnpm vitest run tests/webserver.spec.ts    # single test file
-pnpm vitest run tests/webserver.spec.ts -t "401"   # single test by name filter
+pnpm vitest run tests/startup.spec.ts    # single test file
+pnpm vitest run tests/startup.spec.ts -t "wildcard"   # single test by name filter
 ```
 
 CI (`.github/workflows/ci.yml`) runs `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm test` on Node 18/20/22, plus an `e2e` job that installs the latest `@deepseek-ai/dsh@next` and runs `pnpm test:e2e` (see `tests/e2e/remote-access.e2e.ts`).
@@ -26,41 +26,24 @@ To test the package inside a real dsh harness, install it into the `web` profile
 
 ## Architecture
 
-The patch layer lives in `cordis.patch.yml`. It disables the stock `web-startup`, `webserver`, and `web-runtime` rows by id, then inserts four plugins (mounted under new ids). Each is a Cordis plugin:
+The patch layer lives in `cordis.patch.yml`. It disables the stock `web-startup` row and overrides `web-runtime`'s URL print, then inserts three plugins (mounted under new ids). Each is a Cordis plugin:
 
-- **`src/startup.ts`** — fork of `@deepseek-ai/dsh-web-app/startup`. Parses the `dsh --profile web` flag family (`--host`, `--port`, `--no-open`, `--trusted-host`, `--web_token`) via a vendored `parseCmdline` (ported from `@deepseek-ai/dsh-cmdline`, MIT) that wires commander output through the harness's bounded-exit `ctx.appExit`. Provides the `webStartup` service (constant `WEB_STARTUP_SERVICE`), whose `webToken` is non-empty only for an all-interfaces bind: explicit `--web_token` wins, then `$DSH_WEB_TOKEN`, then a random token minted at startup (`randomBytes(32)` → base64url); a loopback bind carries `''` (no gate) even when the user named a token. Exposes `internals` (mintRandomToken / envWebToken / stdout / stderr) as test seams. Binding `0.0.0.0` always ends up behind a token — a random token is minted rather than allowing an unauthenticated bind.
-- **`src/webserver.ts`** — fork of `@deepseek-ai/dsh-host-webserver`, a Cordis `Service` named `webServer`. Adds the token gate **before route matching** so it covers every surface: SPA fallback, `/api` RPC bridge, and the WebSocket downlink. Otherwise preserves the upstream service contract (below). This is the core security surface — read it carefully before editing.
-- **`src/url.ts`** — prints the URL line at boot with the `?web_token=` grant embedded (`dsh web: http://127.0.0.1:<port>/?web_token=... (LAN: ...)`). Replaces the stock token-less URL print. Waits on the Loader (`ctx.get('loader')?.await()`) so it prints only after boot settles; computes LAN addresses from `os.networkInterfaces()` when bound to `0.0.0.0`.
-- **`src/polyfill.ts`** — registers an index tap injecting a `crypto.randomUUID` polyfill (built on `crypto.getRandomValues`) before `</head>`. `randomUUID` is secure-context-only and undefined over plain HTTP on a LAN IP, which would throw in client bundles (RPC ids, attachment ids) and break the WebSocket readiness handshake. Only active when a token is set.
+- **`src/startup.ts`** — fork of `@deepseek-ai/dsh-web-app/startup`. Parses the `dsh --profile web` flag family (`--host`, `--port`, `--no-open`, `--trusted-host`) via a vendored `parseCmdline` (ported from `@deepseek-ai/dsh-cmdline`, MIT) that wires commander output through the harness's bounded-exit `ctx.appExit`. Provides the `webStartup` service (constant `WEB_STARTUP_SERVICE`): a wildcard `--host` (`0.0.0.0`, `::`) is resolved to this machine's first non-internal IPv4 address — upstream rejects wildcard binds outright because they would expose remote code execution to the network — and `remote` reports whether the resolved address is non-loopback. Exposes `internals` (lanAddresses / stdout / stderr) as test seams.
+- The stock `webserver` row (`@deepseek-ai/dsh-host-webserver`) is **not** forked: binding a concrete address needs no patch, and the harness `/api` fence (`isTrustedApiRequest`) accepts the bind address on its own, so no LAN `trustedHosts` entries are needed.
+- **`src/url.ts`** — prints the URL line at boot naming the address actually bound, with the harness launch token embedded (`dsh web: http://<bound>:<port>/?token=...`), read structurally from `ctx.get('connection').authenticatedUrl`. Replaces the stock URL print (which names the composed host rather than the address a wildcard resolved to). Waits on the Loader (`ctx.get('loader')?.await()`) so it prints only after boot settles.
+- **`src/polyfill.ts`** — registers an index tap injecting a `crypto.randomUUID` polyfill (built on `crypto.getRandomValues`) before `</head>`. `randomUUID` is secure-context-only and undefined over plain HTTP on a LAN IP, which would throw in client bundles (RPC ids, attachment ids) and break the WebSocket readiness handshake. Active only on a non-loopback bind (`remote`).
 
-`src/index.ts` is just a self-describing entry re-exporting `WEB_STARTUP_SERVICE`/`WebStartupValues`. `src/injections.ts` is vendored verbatim from the upstream webserver (do not diverge it unnecessarily).
+`src/index.ts` is just a self-describing entry re-exporting `WEB_STARTUP_SERVICE`/`WebStartupValues`. `src/loopback.ts` flips the client's `connection.isLoopback` for remote browsers; its row is currently commented out in the patch layer pending diagnosis of a documentpreview activation failure.
 
-### The `webServer` service contract (must keep when editing the fork)
+### Two rules to keep when editing this bundle
 
-The composition resolves `ctx.webServer` unchanged, so upstream rows keep working. Contract:
-
-- `register(route)` / `registerUpgrade(route)` — exact + prefix route tables; duplicate `(kind, path)` throws.
-- `registerFallback(handler)` — a single fallback seat (the SPA dist server); a second registration throws.
-- `tapIndex(transform)` — raw html→html transforms applied in registration order.
-- `renderIndex(html)` — structured injection table first (`webserver/index-inject` emit, rows from `src/injections.ts`), then raw taps. Called by the upstream `frontend-static` fallback owner on every index response.
-- `port` / `host` getters; the listening port (OS-assigned when configured 0).
-
-Routing is exact-map first, then longest-prefix-wins over the prefix table, then the fallback seat.
-
-### Token gate (`src/webserver.ts`)
-
-- Constant-time comparison: sha256 hash both sides, then `timingSafeEqual` — never leaks length or content.
-- Cookie `dsh_web_token`, attributes `Path=/; HttpOnly; SameSite=Lax`, session-scoped.
-- `?web_token=` query grants once: 302 to the clean pathname + `Set-Cookie`, so the token leaves the address bar and the browser follows the cookie.
-- `/manifest.webmanifest` is exempt for GET/HEAD only (browsers fetch the PWA manifest without the session cookie).
-- WebSocket upgrade requires the cookie directly (the WS handshake can't carry the query flow); denial answers `401` with a text body, never a bare socket close.
-- `authorizeApiAsLoopback` rewrites the Host/origin of an already-authenticated `/api` request to `127.0.0.1:<port>` so it passes the harness's downstream trust fence (privileged methods like `settings.*`, `credentials.*`, `llm.discoverModels`). This is safe only because the gate already admitted a cookie-bearing same-site client.
-- Per-request errors never kill the process: `handle()` rejection is caught, logged, and answered `400` (or destroys the socket if headers are sent). Upgraded sockets are tracked and destroyed on teardown (Node's `closeAllConnections()` misses them).
+- **Never rewrite a request's authority.** Since dsh 0.2.x the harness session cookie is authority-bound (`dsh-auth-<sha256(authority)>`, payload `authority` must equal the request Host), so presenting `/api` as loopback hides that cookie and the fence answers 401.
+- **Never bind a wildcard address.** Resolve it to a concrete interface address instead; that is also what makes the harness trust fence accept the browser's Host without extra `--trusted-host` entries.
 
 ## Testing conventions
 
-- Tests import source directly (`../src/webserver.ts`) — no compiled `lib/` involvement.
-- `tests/webserver.spec.ts` boots a **real composition**: a test-only `cordis.yml` through the vendored `@deepseek-ai/cordis-plugin-loader` plus `cordis-plugin-include`, then asserts against the live HTTP surface (routing precedence, index taps, fallback-seat semantics, error containment, teardown) and the gate behavior (401 denial, `?web_token=` 302 + cookie, cookie pass, `/api` loopback presentation, manifest exemption, upgrade 401). The other specs (`startup`, `url`, `polyfill`) test their modules in isolation.
+- Tests import source directly (`../src/startup.ts`) — no compiled `lib/` involvement.
+- `tests/startup.spec.ts` boots a **real composition**: a test-only `cordis.yml` through the vendored `@deepseek-ai/cordis-plugin-loader` plus `cordis-plugin-include`, then asserts the published service (flag parsing, wildcard resolution, `remote`, bounded exits). The other specs (`url`, `polyfill`, `loopback`) test their modules in isolation.
 - Every behavior change must come with a test that passes via `pnpm test`.
 
 ## Coding conventions

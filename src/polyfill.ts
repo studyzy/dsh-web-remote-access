@@ -13,19 +13,24 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
 /** Stable Cordis plugin name. */
-export const name = 'web-token-polyfill'
+export const name = 'web-remote-polyfill'
 
 /** Services required before the tap can register. */
 export const inject = ['webServer']
 
-/** Plugin config: the web token; empty disables the tap. */
+/** The webserver index-tap seam, read structurally: the service is upstream's. */
+interface WebServerFacts {
+  tapIndex(transform: (html: string) => string): () => void
+}
+
+/** Plugin config: whether this bind serves beyond the local machine. */
 export interface Config {
-  /** The web token; when set, the served index gets the randomUUID polyfill. */
-  webToken: string
+  /** True when the bound address is not loopback; a loopback bind needs no tap. */
+  remote: boolean
 }
 
 export const Config: z<Config> = z.object({
-  webToken: z.string().default(''),
+  remote: z.boolean().default(false),
 })
 
 /** RFC 4122 v4 UUID from `crypto.getRandomValues`, exposed on insecure origins. */
@@ -51,6 +56,8 @@ if (typeof crypto.randomUUID !== 'function') {
  * @param config - validated {@link Config}.
  */
 export function apply(ctx: Context, config: Config): void {
-  if (config.webToken === '') return
-  ctx.webServer.tapIndex(html => html.replace('</head>', `${POLYFILL_SCRIPT}</head>`))
+  if (!config.remote) return
+  const server = ctx.get('webServer') as WebServerFacts | undefined
+  if (server === undefined) return
+  server.tapIndex(html => html.replace('</head>', `${POLYFILL_SCRIPT}</head>`))
 }

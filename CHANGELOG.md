@@ -4,14 +4,29 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING:移除本包自己的 web token 门禁**。远程访问改为完全依赖 harness(dsh 0.2.x)自身的会话令牌:打印 URL 里的 `?token=` 换取 `dsh-auth-*` Cookie,页面、`/api` RPC、WebSocket 下行全部由它把关。随之删除:
+  - CLI 的 `--web_token` 与环境变量 `$DSH_WEB_TOKEN`(传入将被视为未知选项);
+  - `dsh_web_token` Cookie 与 `?web_token=` 授权流程;
+  - `src/webserver.ts` 这个 `@deepseek-ai/dsh-host-webserver` fork 及其 `src/injections.ts` —— 门禁没了就不需要 fork,也不必再手工同步上游的 index 渲染契约。上游 `webserver` 行照常启用,`package.json` 的 `./webserver` 导出一并移除。
+- 打印的 URL 不再有第二个 token:此前是 `?web_token=<本包令牌>&token=<harness 启动令牌>`,现在只有 `?token=`。
+
+### Changed
+
+- `--host 0.0.0.0` 不再真的绑定通配地址:上游明确拒绝通配绑定("binding every interface would expose remote code execution to the network"),本包改为把它解析为本机第一个**非内部 IPv4 地址**再绑定。副作用:多网卡机器只服务解析到的那一个网卡(可用 `--host <具体地址>` 指定),且本机没有非内部 IPv4 时启动报错。
+- 打印的 URL 行改为实际绑定的地址(此前固定打印 `127.0.0.1` 加一个 LAN 片段),并始终附 harness 启动令牌。
+- `polyfill` / `loopback` 行的启用条件从"配置了 web token"改为"非回环绑定"(`webStartup.remote`),语义更贴切:LAN IP 上的纯 HTTP 才是需要 polyfill 的非安全上下文。
+
 ### Fixed
 
-- 本地回环访问不再要求 web token:此前 `webToken` 永远存在(无显式令牌时也随机生成),导致安装插件后 `dsh --profile web` 默认回环访问也被门禁。现在令牌仅对 `--host 0.0.0.0` 绑定启用(`--web_token` → `$DSH_WEB_TOKEN` → 启动时随机生成);回环绑定(默认或 `--host 127.0.0.1`)令牌为空、不启用门禁,即使显式传入 `--web_token` / `$DSH_WEB_TOKEN` 也忽略。
+- 远程浏览器访问 `/api`(如 `/api/pluginInventory/list`)返回 401:harness 的会话 Cookie 是**权威绑定**的(名 `dsh-auth-<sha256(authority)>`,载荷 `authority` 必须等于请求 Host),本包此前把 `/api` 的 Host/Origin 改写成回环权威,围栏因此找不到 Cookie;页面走 index 路径不受影响,表现为"页面能开、`/api` 全 401"。现在不再改写任何权威,且绑定地址本身就是围栏信任的权威(`isBindAddressAuthority`),`/api` RPC 与 WebSocket 升级都通过。
 
 ### Added
 
-- 浏览器 e2e(`tests/e2e/`, `pnpm test:e2e`):在真实 `dsh` CLI 链路上验证插件在最新 dsh 下可用——隔离 `$DSH_HOME` 中通过 `dsh plugin --profile web add` 安装 bundle,以 `--host 0.0.0.0 --web_token` 启动,断言启动行内嵌 `?web_token=` 授权 URL、无 Cookie/令牌时所有表面(页面、`/api`、WebSocket 升级)返回 401、`?web_token=` 授权会话 Cookie(302)、SPA 在 Cookie 下正常返回且注入 `crypto.randomUUID` polyfill、`/manifest.webmanifest` 保持公开、LAN 网卡上的门禁一致,并由 Playwright 通过**局域网 IP**(而非回环地址)启动 WebUI 断言零页面错误——回环是安全上下文,`crypto.randomUUID` 原生存在,只有局域网 IP 下的非安全上下文才会真正触发 polyfill。CI 新增 `e2e` job 对 `@deepseek-ai/dsh@next` 运行,无需密钥。
-- 本地浏览器 e2e(`pnpm test:e2e:local`):复用开发者真实 `~/.dsh` 的 web profile,把当前源码链接进去,同样通过局域网 IP 验证令牌门禁与 WebUI 启动(不入 CI)。
+- `--cookie-max-age-days <days>`:透传给 harness `connection` 行的 `cookieMaxAgeDays`,控制会话 Cookie 的有效天数(默认 `30`)。注意浏览器按 RFC 6265bis 把 `Max-Age`/`Expires` 截断到 **400 天**(Chrome 104+ / Firefox 110+ / Safari 17+),写 `999` 实际只会拿到约 400 天。
+- 浏览器 e2e(`tests/e2e/`, `pnpm test:e2e`):在真实 `dsh` CLI 链路上验证插件在最新 dsh 下可用——隔离 `$DSH_HOME` 中通过 `dsh plugin --profile web add` 安装 bundle,以 `--host 0.0.0.0`(上游会拒绝、本包负责解析)启动,断言启动行给出解析后的 LAN 地址且只带 `?token=`、无会话 Cookie 时所有表面(页面、`/api`、WebSocket 升级)返回 401、`?token=` 换取 Cookie(303)、SPA 在 Cookie 下正常返回且注入 `crypto.randomUUID` polyfill、`/manifest.webmanifest` 公开、已认证的 `/api` 调用不再 401/403,并由 Playwright 通过**局域网地址**(而非回环)启动 WebUI 断言零页面错误——回环是安全上下文,`crypto.randomUUID` 原生存在,只有局域网地址下的非安全上下文才会真正触发 polyfill。CI 新增 `e2e` job 对 `@deepseek-ai/dsh@next` 运行,无需密钥。
+- 本地浏览器 e2e(`pnpm test:e2e:local`):复用开发者真实 `~/.dsh` 的 web profile,把当前源码链接进去,同样通过局域网地址验证远程访问与 WebUI 启动(不入 CI)。
 
 ## [1.0.2] - 2026-08-21
 
