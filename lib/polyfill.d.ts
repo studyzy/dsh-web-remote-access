@@ -11,13 +11,13 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 /** Stable Cordis plugin name. */
-export declare const name = "web-token-polyfill";
+export declare const name = "web-remote-polyfill";
 /** Services required before the tap can register. */
 export declare const inject: string[];
-/** Plugin config: the web token; empty disables the tap. */
+/** Plugin config: whether this bind serves beyond the local machine. */
 export interface Config {
-    /** The web token; when set, the served index gets the randomUUID polyfill. */
-    webToken: string;
+    /** True when the bound address is not loopback; a loopback bind needs no tap. */
+    remote: boolean;
 }
 export declare const Config: z<Config>;
 /**

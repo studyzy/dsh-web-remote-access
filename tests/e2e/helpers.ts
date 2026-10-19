@@ -13,10 +13,8 @@ import { fileURLToPath } from 'node:url'
 import type { Page } from 'playwright'
 import { expect } from 'vitest'
 
-/** Ready line printed by the bundle's URL plugin: `dsh web: <local> (LAN: <lan>)`. */
+/** Ready line printed by the bundle's URL plugin: `dsh web: <url>`. */
 const DSH_READY_LINE = /^dsh web: (http:\/\/[^\s]+)/
-/** Optional LAN URL fragment appended when bound to 0.0.0.0 and a LAN IPv4 exists. */
-const DSH_LAN_URL = /\(LAN: (http:\/\/[^\s]+)\)/
 
 /**
  * Directory on PATH whose `pnpm` dsh will resolve to. The vitest process is
@@ -75,7 +73,7 @@ export function probeFreePort(): Promise<number> {
 
 /**
  * Resolve once `dsh web` prints its listening line and return the full line.
- * The line is the bundle's own URL print (`dsh web: http://127.0.0.1:PORT/?web_token=... (LAN: ...)`)
+ * The line is the bundle's own URL print (`dsh web: http://<bound>:<port>/?token=...`)
  * and is asserted by the test — so the raw line, not a parsed URL, is returned.
  */
 export function waitForReadyLine(child: ChildProcess): Promise<string> {
@@ -86,10 +84,12 @@ export function waitForReadyLine(child: ChildProcess): Promise<string> {
     }, 90_000)
     const onData = (chunk: Buffer): void => {
       out += chunk.toString()
-      const match = /dsh web: http:\/\/[^\s]+/.exec(out)
-      if (match !== null) {
+      // The harness itself prints a `dsh web: listening on ...` notice; only
+      // the bundle's URL line names an http:// URL, so match on that.
+      const line = out.split('\n').find(candidate => /^dsh web: http:\/\/\S+/.test(candidate))
+      if (line !== undefined) {
         clearTimeout(timer)
-        resolve(out.split('\n').find(line => line.startsWith('dsh web:')) ?? match[0])
+        resolve(line.trim())
       }
     }
     child.stdout?.on('data', onData)
@@ -97,16 +97,21 @@ export function waitForReadyLine(child: ChildProcess): Promise<string> {
   })
 }
 
-/** Extract the local loopback URL from a ready line (always present). */
-export function localUrlFromLine(line: string): string {
+/** Extract the printed URL from a ready line (the address the server bound). */
+export function printedUrlFromLine(line: string): string {
   const match = DSH_READY_LINE.exec(line)
-  if (match === null) throw new Error(`ready line has no local URL: ${line}`)
+  if (match === null) throw new Error(`ready line has no URL: ${line}`)
   return match[1] ?? ''
 }
 
-/** Extract the advertised LAN URL from a ready line, if one was printed. */
-export function lanUrlFromLine(line: string): string | undefined {
-  return DSH_LAN_URL.exec(line)?.[1]
+/**
+ * Extract the harness launch token (`?token=`) from a ready line, if the host
+ * printed one. Since dsh 0.2.x the harness mints its own session cookie from
+ * that token and gates the index and the `/api` bridge with it.
+ */
+export function launchTokenFromLine(line: string): string | undefined {
+  const url = DSH_READY_LINE.exec(line)?.[1]
+  return url === undefined ? undefined : new URL(url).searchParams.get('token') ?? undefined
 }
 
 /** One raw HTTP request (no redirect following, no cookie jar) returning status, headers and body. */
@@ -142,16 +147,28 @@ export async function rawRequest(
   })
 }
 
-/** Send one HTTP Upgrade request and return the first response bytes read. */
+/**
+ * Send one HTTP Upgrade request and return the first response bytes read.
+ * Resolves with '' when the server closes without answering (an unknown
+ * upgrade path is destroyed, never answered) so a probe can never hang.
+ */
 export function upgradeOnce(baseUrl: string, path: string): Promise<string> {
   const url = new URL(baseUrl)
   return new Promise((resolve, reject) => {
     const socket = connect(Number(url.port), url.hostname)
+    let received = ''
+    const finish = (): void => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(received)
+    }
+    const timer = setTimeout(finish, 15_000)
     socket.once('error', reject)
+    socket.once('close', finish)
     socket.once('connect', () => {
       socket.once('data', (data: Buffer) => {
-        socket.destroy()
-        resolve(String(data))
+        received += String(data)
+        finish()
       })
       socket.write([
         `GET ${path} HTTP/1.1`,
@@ -203,34 +220,31 @@ export async function runDSH(args: string[], cwd: string, env: NodeJS.ProcessEnv
 }
 
 /**
- * Assert the full token-gate contract against a live server. Shared by the CI
- * and local e2e lanes so a change to the gate's behavior is verified in both
- * environments, not just one.
+ * Assert the remote-access contract against a live server: every surface
+ * answers 401 without the harness session cookie, the launch-token exchange
+ * grants it, and the SPA index is served with the randomUUID polyfill. Shared
+ * by the CI and local e2e lanes so a change is verified in both environments.
  */
-export async function expectTokenGate(baseUrl: string, token: string): Promise<void> {
+export async function expectRemoteAccess(baseUrl: string, launchToken: string): Promise<void> {
   // No cookie → 401 on the SPA fallback, the /api RPC bridge, and a WebSocket
   // upgrade (the upgrade answers 401, never a bare socket close).
   expect((await rawRequest(baseUrl, '/')).status).toBe(401)
-  expect((await rawRequest(baseUrl, '/')).body).toContain('unauthorized')
   expect((await rawRequest(baseUrl, '/api/settings.describe')).status).toBe(401)
-  expect(await upgradeOnce(baseUrl, '/api/events.mux')).toContain('401 Unauthorized')
+  expect(await upgradeOnce(baseUrl, '/api/remote.mux')).toContain('401 Unauthorized')
 
-  // A wrong query token stays denied; the grant flow is navigation (GET) only.
-  expect((await rawRequest(baseUrl, '/?web_token=wrong')).status).toBe(401)
-  expect((await rawRequest(baseUrl, '/?web_token=wrong')).body).toContain('unauthorized')
-  expect((await rawRequest(baseUrl, `/?web_token=${token}`, { method: 'POST' })).status).toBe(401)
+  // The launch-token exchange mints the authority-bound session cookie.
+  const granted = await rawRequest(baseUrl, `/?token=${launchToken}`)
+  expect(granted.status).toBe(303)
+  expect(granted.headers['set-cookie']).toContain('dsh-auth-')
+  const cookie = granted.headers['set-cookie']
+    .split(',')
+    .map(part => part.split(';')[0].trim())
+    .filter(part => part.startsWith('dsh-auth-'))
+    .join('; ')
 
-  // Correct query token on GET → 302 to the clean pathname + session cookie.
-  const granted = await rawRequest(baseUrl, `/?web_token=${token}`)
-  expect(granted.status).toBe(302)
-  expect(granted.headers.location).toBe('/')
-  expect(granted.headers['set-cookie']).toContain(`dsh_web_token=${token}`)
-  expect(granted.headers['set-cookie']).toContain('HttpOnly')
-  expect(granted.headers['set-cookie']).toContain('SameSite=Lax')
-
-  // The cookie passes the gate: the SPA index is served with the randomUUID
-  // polyfill injected (the insecure-origin guard this bundle ships).
-  const cookie = granted.headers['set-cookie'].split(';')[0] as string
+  // The cookie passes the harness: the SPA index is served with the randomUUID
+  // polyfill injected (the insecure-origin guard this bundle ships), and /api
+  // reaches the bridge instead of the authentication fence.
   const index = await rawRequest(baseUrl, '/', { headers: { Cookie: cookie } })
   expect(index.status).toBe(200)
   expect(index.headers['content-type']).toContain('text/html')
@@ -238,6 +252,6 @@ export async function expectTokenGate(baseUrl: string, token: string): Promise<v
   expect(index.body).toContain('crypto.randomUUID')
 
   // The PWA manifest stays public (GET without cookie → 200) so the
-  // installability probe is not gated while everything else is protected.
+  // installability probe is not gated.
   expect((await rawRequest(baseUrl, '/manifest.webmanifest')).status).toBe(200)
 }

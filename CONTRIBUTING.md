@@ -17,11 +17,11 @@ pnpm build        # tsc 编译到 lib/(ESM)
 ```
 src/
   index.ts        # 包入口,导出启动服务的类型与常量
-  startup.ts      # fork @deepseek-ai/dsh-web-app/startup:--web_token / $DSH_WEB_TOKEN / 随机令牌
-  webserver.ts    # fork @deepseek-ai/dsh-host-webserver:令牌门卫 + /api 回环呈现
-  url.ts          # 打印带 ?web_token= 的 URL 行(本地 + LAN)
-  polyfill.ts     # 向 index.html 注入 crypto.randomUUID polyfill
-tests/            # vitest:fork 契约 + 门卫行为(真实 Loader 组合)
+  startup.ts      # fork @deepseek-ai/dsh-web-app/startup:--host 0.0.0.0 → 具体网卡地址
+  url.ts          # 打印绑定地址 + harness ?token= 的 URL 行
+  polyfill.ts     # 非回环绑定时注入 crypto.randomUUID polyfill
+  loopback.ts     # 注入脚本,远程浏览器呈现回环视图(暂未启用)
+tests/            # vitest:startup/url/polyfill 行为(真实 Loader 组合)
 cordis.patch.yml  # dsh bundle patch 层:替换 web-app 行、挂载本包插件
 ```
 
@@ -35,7 +35,7 @@ cordis.patch.yml  # dsh bundle patch 层:替换 web-app 行、挂载本包插件
 
 - TypeScript,`strict` 模式(见 `tsconfig.json`);目标 ES2022、NodeNext 模块解析。
 - 新增/修改行为必须配套测试,并跑通 `pnpm test`。
-- 本包 fork 自上游(`@deepseek-ai/dsh-web-app/startup`、`@deepseek-ai/dsh-host-webserver`)。改动时保持上游契约(`ctx.webServer` 服务、`webStartup` 服务、路由/升级/fallback/索引 tap 语义)不变;如契约必须演进,需在 PR 说明理由。
+- 本包 fork 自上游 `@deepseek-ai/dsh-web-app/startup`(唯一分歧:通配绑定的处理)。改动时保持 `webStartup` 服务契约不变;`webserver` 行不再 fork,不要重新引入对请求权威的改写。
 - 保持零运行时依赖的克制:能用 Node 内建/现有依赖解决的,不新增依赖。
 - 代码注释用英文;面向用户文档(README 等)用中文(本项目 README 为中文)。
 
@@ -43,13 +43,14 @@ cordis.patch.yml  # dsh bundle patch 层:替换 web-app 行、挂载本包插件
 
 ```sh
 pnpm test                 # 全部测试
-pnpm vitest run <file>    # 单文件,如 tests/webserver.spec.ts
+pnpm vitest run <file>    # 单文件,如 tests/startup.spec.ts
 ```
 
 测试覆盖两类:
 
-1. **fork 契约**:真实 Loader 组合下,webserver 的路由优先级、fallback 席位、索引 tap、升级路由、错误隔离与 teardown;
-2. **门卫行为**:401 拒绝、`?web_token=` 授权 302 与 Cookie 下发、Cookie 放行、`/api` 回环呈现、manifest 豁免、升级路径 401。
+1. **startup 契约**:真实 Loader 组合下发布的 `webStartup` 服务(flag 解析、`0.0.0.0` 解析为具体地址、`remote`、有界退出);
+2. **url / polyfill / loopback 行为**:打印行内容与时机、索引 tap 的注入与惰性条件;
+3. **浏览器 e2e**(`pnpm test:e2e`):在真实 `dsh` CLI 上通过局域网地址验证远程绑定、会话令牌门禁与 WebUI 启动。
 
 ## 提交 PR
 

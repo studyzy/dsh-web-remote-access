@@ -1,28 +1,25 @@
 /**
- * web-token-url URL line printing: the printed line embeds the configured
- * token as `?web_token=` so it opens directly, and the LAN variant mirrors
- * the /api trust snapshot for an all-interfaces bind.
+ * web-remote-url URL line printing: the printed line names the address the
+ * server bound and carries the harness launch token (`?token=`) whose exchange
+ * mints the session cookie the Web UI and the /api bridge require.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { apply, Config } from '../src/url.ts'
 
-vi.mock('node:os', async importOriginal => ({
-  ...await importOriginal<typeof import('node:os')>(),
-  networkInterfaces: () => ({
-    lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
-    en0: [{ family: 'IPv4', internal: false, address: '192.168.1.5' }],
-  }),
-}))
-
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 /** A fake webServer carrying just the bind facts the URL line reads. */
-function fakeServer(host: '127.0.0.1' | '0.0.0.0'): unknown {
+function fakeServer(host: string): unknown {
   return { host, port: 4567 }
+}
+
+/** A fake connection service: the stock launch-token seam. */
+function provideConnection(ctx: Context): void {
+  ctx.provide('connection', { authenticatedUrl: (base: string) => `${base}/?token=launch-1` })
 }
 
 /** A fake Loader whose settlement the test controls. */
@@ -30,28 +27,39 @@ function provideLoader(ctx: Context, settle: () => Promise<void> = async () => {
   ctx.provide('loader', { await: settle } as never)
 }
 
-describe('web-token-url', () => {
-  it('prints the token URL (local + LAN) for an all-interfaces bind', async () => {
+describe('web-remote-url', () => {
+  it('prints the bound address with the harness launch token', async () => {
     const ctx = new Context()
-    ctx.provide('webServer', fakeServer('0.0.0.0'))
+    ctx.provide('webServer', fakeServer('192.168.1.5'))
+    provideConnection(ctx)
     provideLoader(ctx)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ printUrl: true, webToken: 'tok-abc' }))
+    apply(ctx, new Config({ printUrl: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith(
-      'dsh web: http://127.0.0.1:4567/?web_token=tok-abc (LAN: http://192.168.1.5:4567/?web_token=tok-abc)',
-    )
+    expect(log).toHaveBeenCalledWith('dsh web: http://192.168.1.5:4567/?token=launch-1')
     await ctx.fiber.dispose()
   })
 
-  it('prints a plain URL when no token is configured', async () => {
+  it('prints the loopback bind when no address was resolved', async () => {
     const ctx = new Context()
     ctx.provide('webServer', fakeServer('127.0.0.1'))
+    provideConnection(ctx)
     provideLoader(ctx)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ printUrl: true, webToken: '' }))
+    apply(ctx, new Config({ printUrl: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567')
+    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=launch-1')
+    await ctx.fiber.dispose()
+  })
+
+  it('prints the bare URL when the host has no launch-token seam', async () => {
+    const ctx = new Context()
+    ctx.provide('webServer', fakeServer('10.0.0.7'))
+    provideLoader(ctx)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    apply(ctx, new Config({ printUrl: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(log).toHaveBeenCalledWith('dsh web: http://10.0.0.7:4567')
     await ctx.fiber.dispose()
   })
 
@@ -59,7 +67,7 @@ describe('web-token-url', () => {
     const ctx = new Context()
     ctx.provide('webServer', fakeServer('127.0.0.1'))
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ printUrl: false, webToken: 'tok-abc' }))
+    apply(ctx, new Config({ printUrl: false }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
@@ -72,7 +80,7 @@ describe('web-token-url', () => {
     const settlement = new Promise<void>((resolve) => { release = resolve })
     provideLoader(ctx, () => settlement)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ printUrl: true, webToken: '' }))
+    apply(ctx, new Config({ printUrl: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).not.toHaveBeenCalled()
     release!()

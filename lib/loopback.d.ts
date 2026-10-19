@@ -7,10 +7,10 @@
  * LAN address is therefore non-loopback, and the settings surface degrades to a
  * process-local "memory" scope whose mirror never reads from the host: the
  * Models page reports "settings are unavailable in this browser" and the
- * Plugins page renders empty — even though the token gate already authenticated
- * the client, and this bundle's webserver rewrites `/api` authority to loopback
- * so the privileged RPCs (`settings.describe`, `llm.providers`,
- * `credentials.describe`, …) would all succeed.
+ * Plugins page renders empty — even though the harness launch-token session
+ * cookie already authenticated the client, so the privileged RPCs
+ * (`settings.describe`, `llm.providers`, `credentials.describe`, …) would all
+ * succeed.
  *
  * The tap injects a script before `</head>` that intercepts the client module
  * loader and wraps the `@deepseek-ai/dsh-client-connection` plugin factory. When
@@ -22,13 +22,13 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 /** Stable Cordis plugin name. */
-export declare const name = "web-token-loopback";
+export declare const name = "web-remote-loopback";
 /** Services required before the tap can register. */
 export declare const inject: string[];
-/** Plugin config: the web token; empty disables the tap. */
+/** Plugin config: whether this bind serves beyond the local machine. */
 export interface Config {
-    /** The web token; when set, the served index gets the isLoopback override. */
-    webToken: string;
+    /** True when the bound address is not loopback; a loopback bind needs no tap. */
+    remote: boolean;
 }
 export declare const Config: z<Config>;
 /**

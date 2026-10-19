@@ -3,23 +3,23 @@
  *
  *   1.  an isolated $DSH_HOME is created (never touches the user's ~/.dsh);
  *   2.  `dsh plugin --profile web add <this repo>` installs the bundle — the
- *       cordis.patch.yml disables the stock web rows and mounts the forked
- *       startup/webserver/url/polyfill plugins;
- *   3.  `dsh web --host 0.0.0.0 --web_token <token> --no-open --port <free>`
- *       is spawned against that home;
+ *       cordis.patch.yml swaps the stock startup row for this bundle's fork and
+ *       mounts the url/polyfill rows;
+ *   3.  `dsh web --host 0.0.0.0 --no-open --port <free>` is spawned against
+ *       that home (the stock startup rejects that wildcard bind outright);
  *   4.  assertions against the real server prove the remote-access bundle
- *       works on the latest dsh: the boot line embeds the grant URL, every
- *       surface (/, /api, WebSocket upgrade) answers 401 without the cookie or
- *       a matching `?web_token=`, the query flow grants a session cookie via a
- *       302, the SPA index is served behind the cookie with the randomUUID
- *       polyfill injected, `/manifest.webmanifest` stays public, and the same
- *       gate holds over the advertised LAN interface;
- *   5.  Playwright boots the WebUI through the advertised LAN interface (not
- *       loopback) with the granted cookie and asserts the SPA renders into
- *       `#root` with zero page errors — over plain HTTP on a non-loopback
- *       origin `crypto.randomUUID` is undefined, so the injected polyfill is
- *       what keeps the client bundles from throwing (loopback is a secure
- *       context where this LAN-only bug could never surface).
+ *       works on the latest dsh: the boot line names the resolved LAN address
+ *       and carries the harness `?token=` grant, every surface (/, /api,
+ *       WebSocket upgrade) answers 401 without the session cookie, the launch
+ *       token exchange grants it via a 303, the SPA index is served behind the
+ *       cookie with the randomUUID polyfill injected, `/manifest.webmanifest`
+ *       stays public, and an authenticated `/api` call reaches the bridge;
+ *   5.  Playwright boots the WebUI through the LAN address (not loopback) and
+ *       asserts the SPA renders into `#root` with zero page errors — over plain
+ *       HTTP on a non-loopback origin `crypto.randomUUID` is undefined, so the
+ *       injected polyfill is what keeps the client bundles from throwing
+ *       (loopback is a secure context where this LAN-only bug could never
+ *       surface).
  *
  * Run: `pnpm test:e2e` (requires `dsh` on PATH; skipped otherwise).
  * Excluded from the default `pnpm test` via vitest.e2e.config.ts.
@@ -33,13 +33,11 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import {
-  expectTokenGate, lanUrlFromLine, localUrlFromLine, probeFreePort, rawRequest, resolvePnpmBinDir,
+  expectRemoteAccess, launchTokenFromLine, printedUrlFromLine, probeFreePort, rawRequest, resolvePnpmBinDir,
   saveFailureShot, runDSH, waitForReadyLine,
 } from './helpers.ts'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
-/** Deterministic token so the grant flow can be asserted byte-for-byte. */
-const TOKEN = 'ci-e2e-token-0123456789abcdef'
 
 /** The e2e needs the real dsh CLI; skip gracefully (with a hint) when absent. */
 function dshAvailable(): boolean {
@@ -72,11 +70,12 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (real dsh CL
     // Install the bundle into a fresh profile via the real dsh CLI.
     await runDSH(['plugin', '--profile', 'web', 'add', REPO_ROOT], home, spawnEnv)
 
-    // Boot the real web server with the bundle mounted and the gate enabled.
+    // Boot the real web server with the bundle mounted: --host 0.0.0.0, which
+    // the stock startup rejects and this bundle resolves to a LAN address.
     const port = await probeFreePort()
     child = spawn('dsh', [
       'web',
-      '--no-open', '--host', '0.0.0.0', '--port', String(port), '--web_token', TOKEN,
+      '--no-open', '--host', '0.0.0.0', '--port', String(port),
     ], {
       cwd: home,
       env: spawnEnv,
@@ -85,14 +84,12 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (real dsh CL
     child.stdout?.on('data', chunk => webLog.push(chunk.toString()))
     child.stderr?.on('data', chunk => webLog.push(chunk.toString()))
     readyLine = await waitForReadyLine(child)
-    baseUrl = localUrlFromLine(readyLine)
-    // The browser goes through the LAN interface the bundle advertises
-    // (falling back to loopback only when the runner has no non-internal IPv4
-    // to advertise). Over plain HTTP on a non-loopback address the origin is
-    // insecure — crypto.randomUUID is undefined — so the injected polyfill
-    // actually runs; loopback is a secure context where LAN-only bugs would
-    // never surface.
-    browserUrl = lanUrlFromLine(readyLine) ?? baseUrl
+    baseUrl = printedUrlFromLine(readyLine)
+    // The browser goes through the LAN address the wildcard bind resolved to.
+    // Over plain HTTP on a non-loopback address the origin is insecure —
+    // crypto.randomUUID is undefined — so the injected polyfill actually runs;
+    // loopback is a secure context where LAN-only bugs would never surface.
+    browserUrl = baseUrl
 
     browser = await chromium.launch()
     page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
@@ -113,27 +110,37 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (real dsh CL
     if (home !== undefined) rmSync(home, { recursive: true, force: true })
   })
 
-  it('prints a boot line that embeds the grant URL (remote access over 0.0.0.0)', () => {
-    // The bundle's URL plugin advertises the token grant so a remote user can
-    // open the printed URL directly — the LAN fragment proves the all-interfaces
-    // bind actually advertised reachable addresses.
-    expect(readyLine).toMatch(/^dsh web: http:\/\/127\.0\.0\.1:\d+\/\?web_token=/)
-    expect(readyLine).toContain(`?web_token=${TOKEN}`)
-    const lan = lanUrlFromLine(readyLine)
-    if (lan !== undefined) expect(lan).toContain(`?web_token=${TOKEN}`)
+  it('prints a boot line naming the resolved LAN address with the launch token', () => {
+    // The bundle advertises the address the wildcard bind resolved to and the
+    // harness launch token whose exchange mints the session cookie — one grant,
+    // not two.
+    expect(readyLine).toMatch(/^dsh web: http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/\?token=/)
+    expect(readyLine).not.toContain('127.0.0.1')
+    expect(readyLine).not.toContain('web_token')
   })
 
-  it('denies every surface without the cookie or a matching token, then grants a session cookie', async () => {
-    await expectTokenGate(baseUrl, TOKEN)
+  it('denies every surface without the session cookie, then grants it', async () => {
+    const launchToken = launchTokenFromLine(readyLine)
+    expect(launchToken).toBeDefined()
+    await expectRemoteAccess(baseUrl, String(launchToken))
   })
 
-  it('keeps the same gate over the advertised LAN interface', async () => {
-    const lan = lanUrlFromLine(readyLine)
-    if (lan === undefined) return // loopback-only environment: nothing to assert
-    expect((await rawRequest(lan, '/')).status).toBe(401)
-    const granted = await rawRequest(lan, `/?web_token=${TOKEN}`)
-    expect(granted.status).toBe(302)
-    expect(granted.headers['set-cookie']).toContain('dsh_web_token=')
+  it('admits an authenticated /api request over the bound LAN authority', async () => {
+    const launchToken = String(launchTokenFromLine(readyLine))
+    const granted = await rawRequest(baseUrl, `/?token=${launchToken}`)
+    const cookie = granted.headers['set-cookie']
+      .split(',')
+      .map(part => part.split(';')[0].trim())
+      .filter(part => part.startsWith('dsh-auth-'))
+      .join('; ')
+    const api = await rawRequest(baseUrl, '/api/settings.describe', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'content-type': 'application/json' },
+    })
+    // 401 = the session cookie did not survive; 403 = the Host fence rejected
+    // the authority the browser sent.
+    expect(api.status).not.toBe(401)
+    expect(api.status).not.toBe(403)
   })
 
   it('boots the WebUI with the granted cookie without page errors', async () => {
@@ -152,8 +159,8 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (real dsh CL
       console.error(`--- dsh web log tail (${hostLog.length} lines) ---\n${hostLog.slice(-80).join('\n')}`)
     })
 
-    // Navigate exactly like a real remote user opening the printed LAN URL: it
-    // already carries `?web_token=<token>`, the server 302s to the clean
+    // Navigate exactly like a real remote user opening the printed URL: it
+    // carries the harness `?token=` grant, the server 303s to the clean
     // pathname with a session cookie, Playwright stores it, and the SPA boots
     // over the insecure LAN origin — the path that actually exercises the
     // injected polyfill (without it, the client bundles throw while minting

@@ -6,13 +6,12 @@
  *   1.  `dsh plugin --profile web add <this repo>` links the current source
  *       into the local web profile (an older `github:`-sourced install is
  *       removed first so the local path wins);
- *   2.  `dsh web --host 0.0.0.0 --web_token <token> --no-open --port <free>`
- *       is spawned against the real home;
- *   3.  the token gate is asserted over the live server (401 without a cookie
- *       or matching token, `?web_token=` 302 + session cookie, SPA + polyfill
- *       behind the cookie, public manifest), and Playwright boots the WebUI
- *       through the LAN interface with the granted cookie asserting zero page
- *       errors.
+ *   2.  `dsh web --host 0.0.0.0 --no-open --port <free>` is spawned against
+ *       the real home;
+ *   3.  remote access is asserted over the live server (401 without the session
+ *       cookie, `?token=` exchange granting it, SPA + polyfill behind the
+ *       cookie, public manifest), and Playwright boots the WebUI through the
+ *       LAN address asserting zero page errors.
  *
  * Unlike the CI lane (`remote-access.e2e.ts`, isolated $DSH_HOME), this one
  * reuses the local profile and intentionally does NOT clean up: the source
@@ -33,13 +32,11 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import {
-  expectTokenGate, lanUrlFromLine, localUrlFromLine, probeFreePort, resolvePnpmBinDir, runDSH,
+  expectRemoteAccess, launchTokenFromLine, printedUrlFromLine, probeFreePort, resolvePnpmBinDir, runDSH,
   saveFailureShot, waitForReadyLine,
 } from './helpers.ts'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
-/** Deterministic token so the grant flow can be asserted byte-for-byte. */
-const TOKEN = 'local-e2e-token-0123456789abcdef'
 
 /** The local lane needs the real dsh CLI; skip gracefully when absent. */
 function dshAvailable(): boolean {
@@ -79,7 +76,7 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (local ~/.ds
     const port = await probeFreePort()
     child = spawn('dsh', [
       'web',
-      '--no-open', '--host', '0.0.0.0', '--port', String(port), '--web_token', TOKEN,
+      '--no-open', '--host', '0.0.0.0', '--port', String(port),
     ], {
       cwd: home,
       env: spawnEnv,
@@ -88,13 +85,12 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (local ~/.ds
     child.stdout?.on('data', chunk => webLog.push(chunk.toString()))
     child.stderr?.on('data', chunk => webLog.push(chunk.toString()))
     readyLine = await waitForReadyLine(child)
-    baseUrl = localUrlFromLine(readyLine)
-    // The browser goes through the LAN interface (falling back to loopback only
-    // when the machine has no non-internal IPv4 to advertise). Over plain HTTP
-    // on a non-loopback address the origin is insecure — crypto.randomUUID is
-    // undefined — so the injected polyfill actually runs; loopback is a secure
-    // context where LAN-only bugs would never surface.
-    browserUrl = lanUrlFromLine(readyLine) ?? baseUrl
+    baseUrl = printedUrlFromLine(readyLine)
+    // The browser goes through the LAN address the wildcard bind resolved to.
+    // Over plain HTTP on a non-loopback address the origin is insecure —
+    // crypto.randomUUID is undefined — so the injected polyfill actually runs;
+    // loopback is a secure context where LAN-only bugs would never surface.
+    browserUrl = baseUrl
 
     browser = await chromium.launch({ headless: process.platform !== 'darwin' })
     page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
@@ -116,15 +112,15 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (local ~/.ds
     // for the developer's daily use.
   })
 
-  it('prints a boot line that embeds the grant URL', () => {
-    expect(readyLine).toMatch(/^dsh web: http:\/\/127\.0\.0\.1:\d+\/\?web_token=/)
-    expect(readyLine).toContain(`?web_token=${TOKEN}`)
-    const lan = lanUrlFromLine(readyLine)
-    if (lan !== undefined) expect(lan).toContain(`?web_token=${TOKEN}`)
+  it('prints a boot line naming the resolved LAN address with the launch token', () => {
+    expect(readyLine).toMatch(/^dsh web: http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/\?token=/)
+    expect(readyLine).not.toContain('web_token')
   })
 
-  it('enforces the token gate on every surface', async () => {
-    await expectTokenGate(baseUrl, TOKEN)
+  it('denies every surface without the session cookie, then grants it', async () => {
+    const launchToken = launchTokenFromLine(readyLine)
+    expect(launchToken).toBeDefined()
+    await expectRemoteAccess(baseUrl, String(launchToken))
   })
 
   it('boots the WebUI with the granted cookie without page errors', async () => {
@@ -142,8 +138,8 @@ describe.skipIf(!dshAvailable())('dsh-web-remote-access browser e2e (local ~/.ds
       console.error(`--- dsh web log tail (${hostLog.length} lines) ---\n${hostLog.slice(-80).join('\n')}`)
     })
 
-    // Navigate exactly like a real remote user opening the printed LAN URL: it
-    // already carries `?web_token=<token>`, the server 302s to the clean
+    // Navigate exactly like a real remote user opening the printed URL: it
+    // carries the harness `?token=` grant, the server 303s to the clean
     // pathname with a session cookie, Playwright stores it, and the SPA boots
     // over the insecure LAN origin (the path that exercises the polyfill).
     await page.goto(browserUrl, { waitUntil: 'load', timeout: 90_000 })
