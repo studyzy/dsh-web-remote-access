@@ -1,7 +1,7 @@
 {
   "name": "@studyzy/dsh-web-remote-access",
   "description": "Out-of-tree dsh web-profile bundle: enables dsh web remote access by resolving the --host 0.0.0.0 bind (which upstream rejects) to a concrete interface address, printing that URL with the harness launch token, and polyfilling crypto.randomUUID for insecure LAN origins. Forks @deepseek-ai/dsh-web-app/startup.",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "keywords": [
     "dsh",
     "deepseek-harness",
